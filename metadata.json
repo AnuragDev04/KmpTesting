@@ -1,0 +1,6 @@
+{
+  "name": "CareHome",
+  "description": "Healthcare & Home Nursing Service mobile application for booking verified nurses, elder care, vaccinations, and patient care with secure online payments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
