@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		AA84822317E62564CFA3C2C8 /* KmpTest.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KmpTest.app; sourceTree = BUILT_PRODUCTS_DIR; };
+AA84822317E62564CFA3C2C8 /* CareHome.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CareHome.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -59,7 +59,7 @@
 		17376D26A2082DA6CBD52B79 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				AA84822317E62564CFA3C2C8 /* KmpTest.app */,
+AA84822317E62564CFA3C2C8 /* CareHome.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -87,7 +87,7 @@
 			packageProductDependencies = (
 			);
 			productName = iosApp;
-			productReference = AA84822317E62564CFA3C2C8 /* KmpTest.app */;
+productReference = AA84822317E62564CFA3C2C8 /* CareHome.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
