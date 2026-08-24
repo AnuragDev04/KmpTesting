@@ -24,6 +24,35 @@ struct CareAppointment: Identifiable, Codable {
     let nurse: String
 }
 
+struct CareNurse: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let qualification: String
+    let experience: String
+    let rating: String
+    let phone: String
+    let specialization: String
+    let bio: String
+    let tint: Color
+}
+
+struct CareNotification: Identifiable {
+    let id: String
+    let title: String
+    let message: String
+    let timestamp: String
+    let icon: String
+    let tint: Color
+    let destination: NotificationDestination
+    var isRead: Bool
+}
+
+enum NotificationDestination {
+    case appointment
+    case nurse
+    case service
+}
+
 @MainActor
 final class CareHomeStore: ObservableObject {
     @Published var isLoggedIn: Bool
@@ -33,6 +62,7 @@ final class CareHomeStore: ObservableObject {
     @Published var selectedService: CareService?
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var notifications: [CareNotification]
 
     let services: [CareService] = [
         CareService(id: "nursing", name: "Home Nursing Visit", subtitle: "Vitals, injections & wound care", price: "₹699", duration: "45–60 mins", icon: "cross.case.fill", tint: .teal, description: "A certified nurse visits your home for professional nursing support, vital checks, injections, and dressing changes."),
@@ -41,6 +71,11 @@ final class CareHomeStore: ObservableObject {
         CareService(id: "physio", name: "Home Physiotherapy", subtitle: "Rehabilitation at your doorstep", price: "₹799", duration: "45–60 mins", icon: "figure.walk.motion", tint: .purple, description: "Personalized mobility assessment, therapeutic exercises, posture work, and pain-relief therapy at home."),
         CareService(id: "lab", name: "Home Lab Test", subtitle: "Safe sample collection", price: "₹399", duration: "20–30 mins", icon: "testtube.2", tint: .pink, description: "Certified phlebotomists collect samples at home with digital reports delivered quickly."),
         CareService(id: "vaccine", name: "Home Vaccination", subtitle: "Safe, sterile & convenient", price: "₹399", duration: "30–45 mins", icon: "syringe.fill", tint: .green, description: "Cold-chain vaccine delivery, professional administration, and post-vaccine observation in the comfort of home.")
+    ]
+
+    let nurses: [CareNurse] = [
+        CareNurse(id: "priya", name: "Priya Menon", qualification: "B.Sc Nursing · ICU Certified", experience: "8 years experience", rating: "4.9", phone: "+919876543210", specialization: "Critical care & elder care", bio: "Priya provides calm, attentive home nursing support and keeps families informed throughout every visit.", tint: .purple),
+        CareNurse(id: "ankit", name: "Ankit Sharma", qualification: "GNM · Emergency Care", experience: "6 years experience", rating: "4.8", phone: "+919876543211", specialization: "Vitals & post-operative care", bio: "Ankit specializes in recovery visits, wound care, and helping patients regain confidence at home.", tint: .indigo)
     ]
 
     init() {
@@ -54,6 +89,11 @@ final class CareHomeStore: ObservableObject {
         } else {
             appointments = []
         }
+        notifications = [
+            CareNotification(id: "reminder", title: "Appointment reminder", message: "Your Home Nursing visit is tomorrow at 10:00 AM.", timestamp: "10:00 AM", icon: "calendar.badge.clock", tint: .purple, destination: .appointment, isRead: false),
+            CareNotification(id: "nurse", title: "Nurse assigned", message: "Priya Menon has been assigned to your upcoming visit.", timestamp: "Yesterday", icon: "person.fill", tint: .teal, destination: .nurse, isRead: false),
+            CareNotification(id: "offer", title: "CareHome special offer", message: "Get 20% off your next home lab test.", timestamp: "18 May", icon: "tag.fill", tint: .orange, destination: .service, isRead: false)
+        ]
     }
 
     func login(name: String, phone: String) {
@@ -68,6 +108,14 @@ final class CareHomeStore: ObservableObject {
     func logout() {
         isLoggedIn = false
         UserDefaults.standard.set(false, forKey: "carehome.loggedIn")
+    }
+
+    func markAllNotificationsRead() {
+        notifications = notifications.map { item in
+            var updated = item
+            updated.isRead = true
+            return updated
+        }
     }
 
     func book(service: CareService, date: Date, address: String) {
@@ -196,8 +244,10 @@ struct HomeView: View {
                         Text(store.userName.isEmpty ? "there" : store.userName).font(.title.bold())
                     }
                     Spacer()
-                    Image(systemName: "bell.badge.fill").font(.title3).foregroundStyle(.teal)
-                        .padding(12).background(Color.teal.opacity(0.12), in: Circle())
+                    NavigationLink(destination: NotificationsView(store: store)) {
+                        Image(systemName: "bell.badge.fill").font(.title3).foregroundStyle(.teal)
+                            .padding(12).background(Color.teal.opacity(0.12), in: Circle())
+                    }
                 }
                 HStack(spacing: 14) {
                     Image(systemName: "sparkles").font(.title2).foregroundStyle(.white)
@@ -310,6 +360,12 @@ struct ServiceDetailView: View {
                     Label("Digital visit summary", systemImage: "doc.text.fill")
                     Label("24/7 CareHome support", systemImage: "headphones")
                 }.padding(18).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+                 if let nurse = store.nurses.first {
+                         NavigationLink(destination: NurseDetailView(nurse: nurse)) {
+                         Label("Meet your care professional", systemImage: "person.crop.circle.badge.checkmark")
+                             .frame(maxWidth: .infinity, alignment: .leading)
+                     }
+                 }
                 Button("Book this service") { showBooking = true }.buttonStyle(.borderedProminent).controlSize(.large).frame(maxWidth: .infinity)
             }.padding()
         }
@@ -421,10 +477,21 @@ struct AppointmentDetailView: View {
                 DetailLine(icon: "mappin.and.ellipse", title: "Care address", value: appointment.address)
                 DetailLine(icon: "person.crop.circle.fill", title: "Assigned nurse", value: appointment.nurse)
                 TrackingTimeline()
+                 NavigationLink(destination: NurseDetailView(nurse: storeNurse(for: appointment.nurse))) {
+                     Label("View nurse profile", systemImage: "person.crop.circle")
+                         .frame(maxWidth: .infinity, alignment: .leading)
+                 }
+                 NavigationLink(destination: NurseTrackingView(appointment: appointment)) {
+                     Label("Track nurse arrival", systemImage: "location.fill")
+                         .frame(maxWidth: .infinity, alignment: .leading)
+                 }
                 Button { callNurse() } label: { Label("Call \(appointment.nurse)", systemImage: "phone.fill").frame(maxWidth: .infinity) }.buttonStyle(.borderedProminent)
                 Button("Cancel booking", role: .destructive) { showCancel = true }.frame(maxWidth: .infinity)
             }.padding()
         }.navigationTitle("Booking details").navigationBarTitleDisplayMode(.inline).alert("Cancel booking?", isPresented: $showCancel) { Button("Keep booking", role: .cancel) {}; Button("Cancel", role: .destructive) {} } message: { Text("Our support team can help reschedule this visit instead.") }
+    }
+    private func storeNurse(for name: String) -> CareNurse {
+        CareNurse(id: "assigned", name: name, qualification: "Certified Care Professional", experience: "Trusted CareHome professional", rating: "4.9", phone: "+919876543210", specialization: "Home healthcare", bio: "Your assigned CareHome professional is ready to support your visit.", tint: .teal)
     }
     private func callNurse() { if let url = URL(string: "tel://+919876543210") { UIApplication.shared.open(url) } }
 }
@@ -445,6 +512,159 @@ struct TrackingTimeline: View {
                 }
             }
         }.padding(18).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+// MARK: - Native iOS nurse and notification screens
+
+struct NurseDetailView: View {
+    let nurse: CareNurse
+    @State private var showMessage = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(spacing: 12) {
+                    Image(systemName: "person.crop.circle.fill")
+                        .font(.system(size: 78))
+                        .foregroundStyle(nurse.tint)
+                    Text(nurse.name).font(.title.bold())
+                    Text(nurse.qualification).foregroundStyle(.secondary)
+                    HStack {
+                        Label(nurse.rating, systemImage: "star.fill").foregroundStyle(.orange)
+                        Text("· \(nurse.experience)").foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+                .background(nurse.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 24))
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Specialization").font(.headline)
+                    Text(nurse.specialization).foregroundStyle(.secondary)
+                    Text("About \(nurse.name)").font(.headline)
+                    Text(nurse.bio).foregroundStyle(.secondary).lineSpacing(4)
+                }
+                .padding()
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+
+                HStack(spacing: 12) {
+                    Button {
+                        if let url = URL(string: "tel://\(nurse.phone)") {
+                            UIApplication.shared.open(url)
+                        }
+                    } label: {
+                        Label("Call", systemImage: "phone.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        showMessage = true
+                    } label: {
+                        Label("Message", systemImage: "message.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding()
+        }
+        .navigationTitle("Nurse profile")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("Message nurse", isPresented: $showMessage) {
+            Button("Done", role: .cancel) {}
+        } message: {
+            Text("Messaging will be available when CareHome chat is connected.")
+        }
+    }
+}
+
+struct NotificationsView: View {
+    @ObservedObject var store: CareHomeStore
+
+    var body: some View {
+        List {
+            if store.notifications.isEmpty {
+                ContentUnavailableView("You're all caught up", systemImage: "bell.slash", description: Text("New appointment and care updates will appear here."))
+            } else {
+                ForEach(store.notifications) { notification in
+                    HStack(alignment: .top, spacing: 14) {
+                        Image(systemName: notification.icon)
+                            .foregroundStyle(notification.tint)
+                            .frame(width: 38, height: 38)
+                            .background(notification.tint.opacity(0.12), in: Circle())
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(notification.title).font(.headline)
+                                Spacer()
+                                Text(notification.timestamp).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Text(notification.message).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    .listRowBackground(notification.isRead ? Color.clear : Color.teal.opacity(0.06))
+                    .onTapGesture {
+                        if let index = store.notifications.firstIndex(where: { $0.id == notification.id }) {
+                            store.notifications[index].isRead = true
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Notifications")
+        .toolbar {
+            if !store.notifications.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Mark read") { store.markAllNotificationsRead() }
+                }
+            }
+        }
+    }
+}
+
+struct NurseTrackingView: View {
+    let appointment: CareAppointment
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 14) {
+                    Image(systemName: "location.fill").font(.title2).foregroundStyle(.teal)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Your nurse is assigned").font(.headline)
+                        Text(appointment.nurse).foregroundStyle(.secondary)
+                    }
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.teal.opacity(0.1), in: RoundedRectangle(cornerRadius: 18))
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Visit status").font(.title3.bold()).padding(.bottom, 16)
+                    ForEach(Array(["Booking confirmed", "Nurse assigned", "Nurse on the way", "Care in progress"].enumerated()), id: \.offset) { index, step in
+                        HStack(alignment: .top, spacing: 14) {
+                            VStack(spacing: 0) {
+                                Image(systemName: index < 2 ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(index < 2 ? .green : .secondary)
+                                if index < 3 { Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 1, height: 32) }
+                            }
+                            Text(step)
+                                .font(index < 2 ? .body.weight(.semibold) : .body)
+                                .foregroundStyle(index < 2 ? .primary : .secondary)
+                                .padding(.bottom, 18)
+                        }
+                    }
+                }
+                .padding()
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+            }
+            .padding()
+        }
+        .navigationTitle("Track visit")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

@@ -20,6 +20,7 @@ SwiftUI app.
 - Searchable service catalog and service details
 - Date/address selection and simulated secure payment confirmation
 - Booking list, detail view, nurse assignment timeline, and call action
+- Native nurse profile, visit tracking, and notification center
 - Profile, sign out, support ticket form, and support call action
 - AI care advisor with loading, guidance, and safety-disclaimer states
 

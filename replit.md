@@ -3,10 +3,11 @@
 ## Current setup
 
 - This is a Kotlin Multiplatform project with `androidApp`, `sharedLogic`,
-  `sharedUI`, and an iOS/Xcode host.
-- The product UI intentionally remains Android-only in
-  `sharedUI/src/androidMain`; `sharedUI` is retained as the module boundary,
-  but no Compose UI is shared to `commonMain`.
+  and an iOS/Xcode host.
+- The Android product UI is native Jetpack Compose under
+  `androidApp/src/main/kotlin/ui`; it is not shared with iOS.
+- The iOS product UI is native SwiftUI under `iosApp/iosApp/ContentView.swift`;
+  it is not shared with Android.
 - The Android app targets SDK 36 and requires a local Android SDK plus Java 11
   compatibility.
 

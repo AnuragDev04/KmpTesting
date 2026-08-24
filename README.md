@@ -14,12 +14,11 @@ View your app in AI Studio: https://ai.studio/apps/e22b1b6d-9662-444c-9cf1-9fe45
 ## Project structure
 
 - `androidApp` — Android launcher, manifest, app resources, and Android tests.
-- `sharedUI` — shared UI module boundary; the current Compose implementation
-  is in `androidMain` because it still uses Android navigation, resources,
-  intents, and Coil.
+- `androidApp` — native Android launcher and Jetpack Compose UI, navigation,
+  resources, and Android-specific view models.
 - `sharedLogic` — shared logic module boundary, Android data implementation,
   Room persistence, and `commonMain`/platform samples ready for extraction.
-- `iosApp` — Xcode host application connected to the shared framework.
+- `iosApp` — native SwiftUI Xcode host application connected to shared logic.
 
 ## Run Android locally
 

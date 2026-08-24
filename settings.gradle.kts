@@ -26,4 +26,3 @@ rootProject.name = "CareHome"
 
 include(":androidApp")
 include(":sharedLogic")
-include(":sharedUI")
