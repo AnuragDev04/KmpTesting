@@ -64,19 +64,8 @@ final class CareHomeStore: ObservableObject {
     @Published var errorMessage: String?
     @Published var notifications: [CareNotification]
 
-    let services: [CareService] = [
-        CareService(id: "nursing", name: "Home Nursing Visit", subtitle: "Vitals, injections & wound care", price: "₹699", duration: "45–60 mins", icon: "cross.case.fill", tint: .teal, description: "A certified nurse visits your home for professional nursing support, vital checks, injections, and dressing changes."),
-        CareService(id: "icu", name: "24/7 ICU Home Nurse", subtitle: "Critical care & continuous monitoring", price: "₹2,499", duration: "24 hour shift", icon: "heart.text.square.fill", tint: .indigo, description: "Dedicated ICU-trained nursing support for ventilator, tracheostomy, feeding tube, and post-ICU recovery care."),
-        CareService(id: "elder", name: "Compassionate Elder Care", subtitle: "Daily routine & companionship", price: "₹1,199", duration: "12 hour shift", icon: "figure.2.and.child.holdinghands", tint: .orange, description: "Respectful assistance with mobility, hygiene, medication reminders, meals, and meaningful companionship."),
-        CareService(id: "physio", name: "Home Physiotherapy", subtitle: "Rehabilitation at your doorstep", price: "₹799", duration: "45–60 mins", icon: "figure.walk.motion", tint: .purple, description: "Personalized mobility assessment, therapeutic exercises, posture work, and pain-relief therapy at home."),
-        CareService(id: "lab", name: "Home Lab Test", subtitle: "Safe sample collection", price: "₹399", duration: "20–30 mins", icon: "testtube.2", tint: .pink, description: "Certified phlebotomists collect samples at home with digital reports delivered quickly."),
-        CareService(id: "vaccine", name: "Home Vaccination", subtitle: "Safe, sterile & convenient", price: "₹399", duration: "30–45 mins", icon: "syringe.fill", tint: .green, description: "Cold-chain vaccine delivery, professional administration, and post-vaccine observation in the comfort of home.")
-    ]
-
-    let nurses: [CareNurse] = [
-        CareNurse(id: "priya", name: "Priya Menon", qualification: "B.Sc Nursing · ICU Certified", experience: "8 years experience", rating: "4.9", phone: "+919876543210", specialization: "Critical care & elder care", bio: "Priya provides calm, attentive home nursing support and keeps families informed throughout every visit.", tint: .purple),
-        CareNurse(id: "ankit", name: "Ankit Sharma", qualification: "GNM · Emergency Care", experience: "6 years experience", rating: "4.8", phone: "+919876543211", specialization: "Vitals & post-operative care", bio: "Ankit specializes in recovery visits, wound care, and helping patients regain confidence at home.", tint: .indigo)
-    ]
+    let services: [CareService]
+    let nurses: [CareNurse]
 
     init() {
         let defaults = UserDefaults.standard
@@ -88,6 +77,31 @@ final class CareHomeStore: ObservableObject {
             appointments = saved
         } else {
             appointments = []
+        }
+        services = CareLogicKt.sharedServices().map { service in
+            CareService(
+                id: service.id,
+                name: service.name,
+                subtitle: service.subtitle,
+                price: "₹\(Int(service.price))",
+                duration: service.duration,
+                icon: service.icon,
+                tint: .teal,
+                description: service.description
+            )
+        }
+        nurses = CareLogicKt.sharedNurses().map { nurse in
+            CareNurse(
+                id: nurse.id,
+                name: nurse.name,
+                qualification: nurse.qualification,
+                experience: nurse.experience,
+                rating: nurse.rating,
+                phone: nurse.phone,
+                specialization: nurse.specialization,
+                bio: nurse.bio,
+                tint: .purple
+            )
         }
         notifications = [
             CareNotification(id: "reminder", title: "Appointment reminder", message: "Your Home Nursing visit is tomorrow at 10:00 AM.", timestamp: "10:00 AM", icon: "calendar.badge.clock", tint: .purple, destination: .appointment, isRead: false),
@@ -727,18 +741,10 @@ struct AdvisorView: View {
     }
     private func askAdvisor() {
         isLoading = true
-        let prompt = question.lowercased()
+        let prompt = question
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(550))
-            if prompt.contains("elder") || prompt.contains("senior") {
-                answer = "Compassionate Elder Care may be a good fit. It includes mobility assistance, medication reminders, daily routine support, and companionship."
-            } else if prompt.contains("surgery") || prompt.contains("operation") {
-                answer = "Home Nursing Visit or Home Physiotherapy can support recovery. A nurse can monitor your wound and vitals; a physiotherapist can help restore safe movement."
-            } else if prompt.contains("critical") || prompt.contains("icu") {
-                answer = "Please speak with your doctor first. For medically approved home recovery, our 24/7 ICU Home Nurse service offers continuous monitoring and critical-care support."
-            } else {
-                answer = "A Home Nursing Visit is a helpful starting point for vitals, injections, wound care, and a professional assessment. Our care team can guide you to the right package."
-            }
+            answer = CareLogicKt.sharedAdvisorResponse(query: prompt)
             isLoading = false
         }
     }

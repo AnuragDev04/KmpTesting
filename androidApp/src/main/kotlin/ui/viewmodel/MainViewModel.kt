@@ -7,6 +7,8 @@ import com.example.data.api.GeminiCareAdvisor
 import com.example.data.local.AppDatabase
 import com.example.data.models.*
 import com.example.data.repository.HealthcareRepository
+import com.example.sharedlogic.sharedNurses
+import com.example.sharedlogic.sharedServices
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -28,8 +30,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // --- Services Catalog State ---
-    val services: List<HealthcareService> = repository.getAvailableServices()
-    val nurses: List<Nurse> = repository.getAvailableNurses()
+    val services: List<HealthcareService> = sharedServices().map { service ->
+        HealthcareService(
+            id = service.id,
+            name = service.name,
+            category = ServiceCategory.valueOf(service.category),
+            price = service.price,
+            priceUnit = "per visit",
+            duration = service.duration,
+            description = service.description,
+            inclusions = emptyList(),
+            imageDrawableRes = null,
+            isPopular = service.isPopular
+        )
+    }
+    val nurses: List<Nurse> = sharedNurses().map { nurse ->
+        Nurse(
+            id = nurse.id,
+            name = nurse.name,
+            qualification = nurse.qualification,
+            experienceYears = nurse.experience.filter { it.isDigit() }.toIntOrNull() ?: 0,
+            rating = nurse.rating.toDoubleOrNull() ?: 0.0,
+            reviewsCount = 0,
+            phone = nurse.phone,
+            specialization = nurse.specialization,
+            bio = nurse.bio
+        )
+    }
 
     private val _selectedCategory = MutableStateFlow<ServiceCategory?>(null)
     val selectedCategory: StateFlow<ServiceCategory?> = _selectedCategory.asStateFlow()
