@@ -1,6 +1,5 @@
 package com.example.data.api
 
-import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -22,11 +21,7 @@ object GeminiCareAdvisor {
         .build()
 
     suspend fun getCareAdvice(userQuery: String, patientAge: String, condition: String): String = withContext(Dispatchers.IO) {
-        val apiKey = try {
-            BuildConfig.GEMINI_API_KEY
-        } catch (e: Exception) {
-            ""
-        }
+        val apiKey = System.getenv("GEMINI_API_KEY").orEmpty()
 
         if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
             return@withContext generateFallbackAdvice(userQuery, patientAge, condition)

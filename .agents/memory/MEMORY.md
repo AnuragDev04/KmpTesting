@@ -1,0 +1,1 @@
+- [KMP toolchain verification](kmp-toolchain-verification.md) — the reference wrapper checksum must match its Gradle distribution; Android compilation also requires an installed SDK.

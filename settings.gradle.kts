@@ -24,4 +24,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "CareHome"
 
-include(":app")
+include(":androidApp")
+include(":sharedLogic")
+include(":sharedUI")
