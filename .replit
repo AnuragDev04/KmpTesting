@@ -2,3 +2,26 @@ modules = ["java-graalvm22.3"]
 [nix]
 channel = "stable-25_05"
 packages = ["unzip"]
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Build Android app"
+
+[[workflows.workflow]]
+name = "Build Android app"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "./gradlew :androidApp:assembleDebug"
+
+[workflows.workflow.metadata]
+outputType = "console"
