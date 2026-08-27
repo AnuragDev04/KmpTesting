@@ -1,0 +1,415 @@
+name: Generate iOS IPA File
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      signing_method:
+        description: 'iOS Signing Method'
+        required: true
+        default: 'automatic'
+        type: choice
+        options:
+          - automatic
+          - manual
+          - development-team
+      export_method:
+        description: 'Export Method'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - ad-hoc
+          - app-store
+      bundle_id:
+        description: 'Bundle ID (optional)'
+        required: false
+        default: 'com.example.careHome'
+
+env:
+  XCODE_VERSION: 'latest-stable'
+  IOS_DEPLOYMENT_TARGET: '13.0'
+  DEFAULT_BUNDLE_ID: 'com.example.careHome'
+
+jobs:
+  generate-ipa:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Select Xcode Version
+      run: |
+        sudo xcode-select -p
+        xcodebuild -version
+        xcrun simctl list runtimes
+
+    - name: Setup Java 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Make Gradle Wrapper Executable
+      run: chmod +x ./gradlew
+
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v2
+      with:
+        gradle-version: wrapper
+
+    - name: Cache Dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+          ~/.konan
+        key: ${{ runner.os }}-deps-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-deps-
+
+    - name: Build KMP Shared Framework
+      run: |
+        echo "🔨 Building Kotlin Multiplatform shared framework..."
+        ./gradlew :sharedLogic:assembleXCFramework --no-daemon --stacktrace
+        
+        echo "✅ Framework build complete. Checking output..."
+        find sharedLogic/build -name "*.xcframework" -o -name "*.framework" | head -10
+
+    - name: Prepare iOS Project
+      run: |
+        cd iosApp
+        
+        # Set bundle ID
+        BUNDLE_ID="${{ github.event.inputs.bundle_id || env.DEFAULT_BUNDLE_ID }}"
+        echo "📱 Using Bundle ID: $BUNDLE_ID"
+        
+        # Create a temporary Info.plist with proper configuration
+        cat > iosApp/Info.plist << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleDisplayName</key>
+            <string>CareHome</string>
+            <key>CFBundleExecutable</key>
+            <string>iosApp</string>
+            <key>CFBundleIdentifier</key>
+            <string>$BUNDLE_ID</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>iosApp</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0</string>
+            <key>CFBundleVersion</key>
+            <string>1</string>
+            <key>LSRequiresIPhoneOS</key>
+            <true/>
+            <key>UILaunchStoryboardName</key>
+            <string>LaunchScreen</string>
+            <key>UIRequiredDeviceCapabilities</key>
+            <array>
+                <string>armv7</string>
+            </array>
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+                <string>UIInterfaceOrientationPortrait</string>
+                <string>UIInterfaceOrientationLandscapeLeft</string>
+                <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+            <key>CADisableMinimumFrameDurationOnPhone</key>
+            <true/>
+        </dict>
+        </plist>
+        EOF
+        
+        echo "📄 Info.plist configured"
+
+    - name: Build iOS Archive
+      run: |
+        cd iosApp
+        
+        echo "🏗️ Building iOS archive..."
+        
+        SIGNING_METHOD="${{ github.event.inputs.signing_method || 'automatic' }}"
+        
+        if [ "$SIGNING_METHOD" = "automatic" ]; then
+          echo "Using automatic signing..."
+          xcodebuild -project iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/iosApp.xcarchive \
+            archive \
+            -allowProvisioningUpdates \
+            DEVELOPMENT_TEAM=""
+        else
+          echo "Using manual signing..."
+          xcodebuild -project iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/iosApp.xcarchive \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM=""
+        fi
+        
+        echo "✅ Archive created successfully"
+        ls -la build/iosApp.xcarchive/
+
+    - name: Export IPA - Method 1 (Automatic Signing)
+      id: export_auto
+      continue-on-error: true
+      run: |
+        cd iosApp
+        
+        EXPORT_METHOD="${{ github.event.inputs.export_method || 'development' }}"
+        
+        echo "🚀 Attempting IPA export with automatic signing..."
+        
+        cat > export-options-auto.plist << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>method</key>
+            <string>$EXPORT_METHOD</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>compileBitcode</key>
+            <false/>
+            <key>uploadBitcode</key>
+            <false/>
+            <key>uploadSymbols</key>
+            <false/>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+        </dict>
+        </plist>
+        EOF
+        
+        if xcodebuild -exportArchive \
+          -archivePath build/iosApp.xcarchive \
+          -exportPath build/auto/ \
+          -exportOptionsPlist export-options-auto.plist \
+          -allowProvisioningUpdates; then
+          echo "✅ Automatic signing export succeeded"
+          echo "auto_success=true" >> $GITHUB_OUTPUT
+          ls -la build/auto/
+        else
+          echo "❌ Automatic signing export failed"
+          echo "auto_success=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Export IPA - Method 2 (Ad-hoc)
+      id: export_adhoc
+      continue-on-error: true
+      if: steps.export_auto.outputs.auto_success != 'true'
+      run: |
+        cd iosApp
+        
+        echo "🚀 Attempting IPA export with ad-hoc signing..."
+        
+        cat > export-options-adhoc.plist << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>method</key>
+            <string>ad-hoc</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>compileBitcode</key>
+            <false/>
+        </dict>
+        </plist>
+        EOF
+        
+        if xcodebuild -exportArchive \
+          -archivePath build/iosApp.xcarchive \
+          -exportPath build/adhoc/ \
+          -exportOptionsPlist export-options-adhoc.plist \
+          -allowProvisioningUpdates; then
+          echo "✅ Ad-hoc export succeeded"
+          echo "adhoc_success=true" >> $GITHUB_OUTPUT
+          ls -la build/adhoc/
+        else
+          echo "❌ Ad-hoc export failed"
+          echo "adhoc_success=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Export IPA - Method 3 (Enterprise/Development Team)
+      id: export_enterprise
+      continue-on-error: true
+      if: steps.export_auto.outputs.auto_success != 'true' && steps.export_adhoc.outputs.adhoc_success != 'true'
+      run: |
+        cd iosApp
+        
+        echo "🚀 Attempting IPA export with development team signing..."
+        
+        # Try to get any available development team
+        AVAILABLE_TEAMS=$(security find-identity -v -p codesigning | grep "Developer" | head -1 | cut -d'"' -f2 || echo "")
+        
+        cat > export-options-dev.plist << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>method</key>
+            <string>development</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>compileBitcode</key>
+            <false/>
+            <key>uploadBitcode</key>
+            <false/>
+        </dict>
+        </plist>
+        EOF
+        
+        if xcodebuild -exportArchive \
+          -archivePath build/iosApp.xcarchive \
+          -exportPath build/dev/ \
+          -exportOptionsPlist export-options-dev.plist \
+          -allowProvisioningUpdates; then
+          echo "✅ Development team export succeeded"
+          echo "dev_success=true" >> $GITHUB_OUTPUT
+          ls -la build/dev/
+        else
+          echo "❌ Development team export failed"
+          echo "dev_success=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Verify IPA Creation
+      run: |
+        cd iosApp
+        
+        echo "🔍 Checking for created IPA files..."
+        
+        IPA_FOUND=false
+        IPA_PATH=""
+        
+        # Check all possible export directories
+        for dir in build/auto build/adhoc build/dev; do
+          if [ -d "$dir" ] && [ -f "$dir"/*.ipa ]; then
+            IPA_PATH="$dir"
+            IPA_FOUND=true
+            echo "✅ Found IPA in: $dir"
+            ls -la "$dir"/*.ipa
+            break
+          fi
+        done
+        
+        if [ "$IPA_FOUND" = false ]; then
+          echo "❌ No IPA files were created"
+          echo "📋 Available files in build directory:"
+          find build/ -name "*.ipa" -o -name "*.xcarchive" 2>/dev/null || echo "No IPA or archive files found"
+          
+          echo ""
+          echo "💡 This usually means iOS certificates are not configured."
+          echo "   The archive was created successfully, but IPA export requires signing."
+          echo ""
+          echo "📖 To create signed IPAs, you need:"
+          echo "   1. Apple Developer Account"
+          echo "   2. iOS Distribution Certificate"
+          echo "   3. Provisioning Profile"
+          echo "   4. Configure GitHub Secrets (see IOS_BUILD_GUIDE.md)"
+          
+          # Set environment variable for artifact upload
+          echo "IPA_CREATED=false" >> $GITHUB_ENV
+          echo "IPA_PATH=" >> $GITHUB_ENV
+        else
+          echo "✅ IPA creation successful!"
+          echo "IPA_CREATED=true" >> $GITHUB_ENV
+          echo "IPA_PATH=$IPA_PATH" >> $GITHUB_ENV
+          
+          # Get IPA info
+          IPA_FILE=$(ls "$IPA_PATH"/*.ipa | head -1)
+          IPA_SIZE=$(ls -lh "$IPA_FILE" | awk '{print $5}')
+          echo "📦 IPA Size: $IPA_SIZE"
+          echo "📁 IPA Path: $IPA_FILE"
+        fi
+
+    - name: Upload IPA Artifact (if created)
+      if: env.IPA_CREATED == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ios-ipa-${{ github.run_number }}
+        path: |
+          iosApp/${{ env.IPA_PATH }}/*.ipa
+        retention-days: 30
+
+    - name: Upload Archive Artifact (always)
+      uses: actions/upload-artifact@v4
+      with:
+        name: ios-archive-${{ github.run_number }}
+        path: |
+          iosApp/build/iosApp.xcarchive
+        retention-days: 30
+
+    - name: Upload Export Options (for debugging)
+      uses: actions/upload-artifact@v4
+      with:
+        name: export-options-${{ github.run_number }}
+        path: |
+          iosApp/export-options-*.plist
+        retention-days: 7
+
+    - name: Build Summary
+      run: |
+        echo "## 📱 iOS Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ env.IPA_CREATED }}" = "true" ]; then
+          echo "✅ **IPA Generated Successfully!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📦 **Download your IPA file from the Artifacts section below.**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🎯 **Next Steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. Download the \`ios-ipa-${{ github.run_number }}\` artifact" >> $GITHUB_STEP_SUMMARY
+          echo "2. Extract the .ipa file" >> $GITHUB_STEP_SUMMARY
+          echo "3. Install on device using Xcode or third-party tools" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ **IPA Not Generated**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The iOS app was compiled successfully, but IPA export failed." >> $GITHUB_STEP_SUMMARY
+          echo "This is typically due to missing iOS certificates." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📋 **What was created:**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Kotlin Multiplatform framework" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ iOS app compilation" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ iOS archive (.xcarchive)" >> $GITHUB_STEP_SUMMARY
+          echo "- ❌ Signed IPA file" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🔧 **To generate IPA files:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. Get an Apple Developer Account" >> $GITHUB_STEP_SUMMARY
+          echo "2. Create iOS certificates and provisioning profiles" >> $GITHUB_STEP_SUMMARY
+          echo "3. Add certificates as GitHub Secrets" >> $GITHUB_STEP_SUMMARY
+          echo "4. See \`IOS_BUILD_GUIDE.md\` for detailed setup" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "📁 **Available Artifacts:**" >> $GITHUB_STEP_SUMMARY
+        echo "- \`ios-archive-${{ github.run_number }}\` - iOS Archive file" >> $GITHUB_STEP_SUMMARY
+        if [ "${{ env.IPA_CREATED }}" = "true" ]; then
+          echo "- \`ios-ipa-${{ github.run_number }}\` - **Ready-to-install IPA file**" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "- \`export-options-${{ github.run_number }}\` - Export configuration files" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,324 @@
+name: 🚀 Manual IPA Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_id:
+        description: 'Bundle ID (e.g., com.yourname.careHome)'
+        required: true
+        default: 'com.example.careHome'
+      app_name:
+        description: 'App Display Name'
+        required: true  
+        default: 'CareHome'
+      signing_method:
+        description: 'Signing Method'
+        required: true
+        default: 'automatic'
+        type: choice
+        options:
+          - automatic
+          - try-all-methods
+
+jobs:
+  build-ipa:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: ☕ Setup Java 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: 🔧 Setup Build Environment
+      run: |
+        chmod +x ./gradlew
+        xcodebuild -version
+
+    - name: 📦 Build Shared Framework
+      run: |
+        echo "🏗️ Building KMP shared framework..."
+        ./gradlew :sharedLogic:assembleXCFramework --no-daemon
+        echo "✅ Framework built successfully"
+
+    - name: 📱 Configure iOS App
+      run: |
+        cd iosApp
+        
+        BUNDLE_ID="${{ github.event.inputs.bundle_id }}"
+        APP_NAME="${{ github.event.inputs.app_name }}"
+        
+        echo "📱 Configuring app with Bundle ID: $BUNDLE_ID"
+        echo "🏷️ App Name: $APP_NAME"
+        
+        # Update Info.plist with proper configuration
+        cat > iosApp/Info.plist << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleDisplayName</key>
+            <string>$APP_NAME</string>
+            <key>CFBundleExecutable</key>
+            <string>iosApp</string>
+            <key>CFBundleIdentifier</key>
+            <string>$BUNDLE_ID</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>$APP_NAME</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0.0</string>
+            <key>CFBundleVersion</key>
+            <string>${{ github.run_number }}</string>
+            <key>LSRequiresIPhoneOS</key>
+            <true/>
+            <key>UILaunchStoryboardName</key>
+            <string>LaunchScreen</string>
+            <key>UIRequiredDeviceCapabilities</key>
+            <array>
+                <string>armv7</string>
+            </array>
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+                <string>UIInterfaceOrientationPortrait</string>
+                <string>UIInterfaceOrientationLandscapeLeft</string>
+                <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+            <key>UISupportedInterfaceOrientations~ipad</key>
+            <array>
+                <string>UIInterfaceOrientationPortrait</string>
+                <string>UIInterfaceOrientationPortraitUpsideDown</string>
+                <string>UIInterfaceOrientationLandscapeLeft</string>
+                <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+            <key>CADisableMinimumFrameDurationOnPhone</key>
+            <true/>
+        </dict>
+        </plist>
+        EOF
+
+    - name: 🏗️ Build iOS Archive
+      run: |
+        cd iosApp
+        
+        echo "🏗️ Creating iOS archive..."
+        
+        # Clean any previous builds
+        rm -rf build/
+        
+        # Build the archive with automatic provisioning
+        xcodebuild clean archive \
+          -project iosApp.xcodeproj \
+          -scheme iosApp \
+          -configuration Release \
+          -destination 'generic/platform=iOS' \
+          -archivePath build/CareHome.xcarchive \
+          -allowProvisioningUpdates \
+          CODE_SIGN_STYLE=Automatic \
+          DEVELOPMENT_TEAM="" \
+          | tee build.log
+        
+        if [ -d "build/CareHome.xcarchive" ]; then
+          echo "✅ Archive created successfully"
+          ls -la build/CareHome.xcarchive/
+        else
+          echo "❌ Archive creation failed"
+          cat build.log
+          exit 1
+        fi
+
+    - name: 📦 Export IPA - Automatic Signing
+      id: export_ipa
+      run: |
+        cd iosApp
+        
+        echo "📦 Exporting IPA with automatic signing..."
+        
+        # Create export options for automatic signing
+        cat > ExportOptions.plist << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>method</key>
+            <string>development</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>compileBitcode</key>
+            <false/>
+            <key>uploadBitcode</key>
+            <false/>
+            <key>uploadSymbols</key>
+            <false/>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+        </dict>
+        </plist>
+        EOF
+        
+        # Export the archive to IPA
+        if xcodebuild -exportArchive \
+          -archivePath build/CareHome.xcarchive \
+          -exportPath build/ipa/ \
+          -exportOptionsPlist ExportOptions.plist \
+          -allowProvisioningUpdates; then
+          
+          echo "✅ IPA export successful!"
+          
+          # Find the IPA file
+          IPA_FILE=$(find build/ipa -name "*.ipa" | head -1)
+          if [ -n "$IPA_FILE" ]; then
+            echo "📱 IPA created: $IPA_FILE"
+            ls -lh "$IPA_FILE"
+            
+            # Rename with timestamp
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            NEW_NAME="build/ipa/CareHome_${TIMESTAMP}_build${{ github.run_number }}.ipa"
+            mv "$IPA_FILE" "$NEW_NAME"
+            
+            echo "✅ IPA renamed to: $NEW_NAME"
+            echo "ipa_success=true" >> $GITHUB_OUTPUT
+            echo "ipa_path=$NEW_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "❌ IPA file not found after export"
+            echo "ipa_success=false" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "❌ IPA export failed"
+          echo "ipa_success=false" >> $GITHUB_OUTPUT
+          
+          # Try alternative export method
+          echo "🔄 Trying alternative export method..."
+          
+          cat > ExportOptions-AdHoc.plist << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>method</key>
+            <string>ad-hoc</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+        </dict>
+        </plist>
+        EOF
+          
+          if xcodebuild -exportArchive \
+            -archivePath build/CareHome.xcarchive \
+            -exportPath build/ipa-adhoc/ \
+            -exportOptionsPlist ExportOptions-AdHoc.plist \
+            -allowProvisioningUpdates; then
+            
+            IPA_FILE=$(find build/ipa-adhoc -name "*.ipa" | head -1)
+            if [ -n "$IPA_FILE" ]; then
+              echo "✅ Alternative export successful!"
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              NEW_NAME="build/ipa-adhoc/CareHome_AdHoc_${TIMESTAMP}_build${{ github.run_number }}.ipa"
+              mv "$IPA_FILE" "$NEW_NAME"
+              echo "ipa_success=true" >> $GITHUB_OUTPUT
+              echo "ipa_path=$NEW_NAME" >> $GITHUB_OUTPUT
+            fi
+          fi
+        fi
+
+    - name: 📋 Build Report
+      run: |
+        cd iosApp
+        
+        echo "📋 Build Report"
+        echo "==============="
+        echo "Bundle ID: ${{ github.event.inputs.bundle_id }}"
+        echo "App Name: ${{ github.event.inputs.app_name }}"
+        echo "Build Number: ${{ github.run_number }}"
+        echo "Date: $(date)"
+        echo ""
+        
+        if [ "${{ steps.export_ipa.outputs.ipa_success }}" = "true" ]; then
+          echo "✅ SUCCESS: IPA file created!"
+          echo "📱 IPA Location: ${{ steps.export_ipa.outputs.ipa_path }}"
+          ls -lh "${{ steps.export_ipa.outputs.ipa_path }}"
+          
+          # Get IPA size
+          IPA_SIZE=$(ls -lh "${{ steps.export_ipa.outputs.ipa_path }}" | awk '{print $5}')
+          echo "📦 IPA Size: $IPA_SIZE"
+          
+        else
+          echo "❌ FAILED: Could not create IPA file"
+          echo ""
+          echo "📁 Available files in build directory:"
+          find build/ -type f -name "*.xcarchive" -o -name "*.ipa" -o -name "*.log" | head -10
+          echo ""
+          echo "💡 Possible reasons:"
+          echo "   - No Apple Developer account configured"
+          echo "   - Bundle ID not registered in Apple Developer portal"
+          echo "   - Missing provisioning profile"
+          echo ""
+          echo "🔧 To fix this:"
+          echo "   1. Register Bundle ID: ${{ github.event.inputs.bundle_id }} in developer.apple.com"
+          echo "   2. Create iOS Development certificate"
+          echo "   3. Create Development provisioning profile"
+          echo "   4. Or use a different Bundle ID that's already registered"
+        fi
+
+    - name: 📤 Upload IPA (if successful)
+      if: steps.export_ipa.outputs.ipa_success == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: 🍎 CareHome-IPA-${{ github.run_number }}
+        path: |
+          iosApp/${{ steps.export_ipa.outputs.ipa_path }}
+        retention-days: 30
+
+    - name: 📤 Upload Archive (always)
+      uses: actions/upload-artifact@v4
+      with:
+        name: 📁 iOS-Archive-${{ github.run_number }}
+        path: |
+          iosApp/build/CareHome.xcarchive
+        retention-days: 30
+
+    - name: 📤 Upload Build Logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: 🐛 Build-Logs-${{ github.run_number }}
+        path: |
+          iosApp/build.log
+          iosApp/ExportOptions*.plist
+        retention-days: 7
+
+    - name: ✨ Success Summary
+      if: steps.export_ipa.outputs.ipa_success == 'true'
+      run: |
+        echo "🎉 SUCCESS! Your iOS IPA has been generated!"
+        echo ""
+        echo "📱 App: ${{ github.event.inputs.app_name }}"
+        echo "📦 Bundle ID: ${{ github.event.inputs.bundle_id }}"
+        echo "🔢 Build: ${{ github.run_number }}"
+        echo ""
+        echo "📥 Download your IPA file:"
+        echo "   1. Go to this workflow run page"
+        echo "   2. Scroll down to 'Artifacts' section"
+        echo "   3. Download '🍎 CareHome-IPA-${{ github.run_number }}'"
+        echo "   4. Extract the ZIP to get your .ipa file"
+        echo ""
+        echo "📱 Install on device:"
+        echo "   - Use Xcode: Window → Devices and Simulators → Install App"
+        echo "   - Use TestFlight (requires Apple Developer account)"
+        echo "   - Use third-party tools like 3uTools or Sideloadly"
+        echo ""
+        echo "🚀 Your iOS app is ready!"
