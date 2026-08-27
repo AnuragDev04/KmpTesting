@@ -1,5 +1,4 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.plugin.mpp.XCFramework
 
 plugins {
   alias(libs.plugins.kotlin.multiplatform)
@@ -20,17 +19,11 @@ kotlin {
   iosArm64()
   iosSimulatorArm64()
 
-  // Configure XCFramework
-  val xcframeworkName = "SharedLogic"
-  val xcf = XCFramework(xcframeworkName)
-  
-  listOf(
-    targets.getByName("iosArm64"),
-    targets.getByName("iosSimulatorArm64")
-  ).forEach { target ->
-    target.binaries.framework {
-      baseName = xcframeworkName
-      xcf.add(this)
+  targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget> {
+    binaries {
+      framework {
+        baseName = "SharedLogic"
+      }
     }
   }
 
