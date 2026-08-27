@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.plugin.mpp.XCFramework
 
 plugins {
   alias(libs.plugins.kotlin.multiplatform)
