@@ -1,0 +1,198 @@
+name: Build and Release iOS App
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      export_method:
+        description: 'Export Method'
+        required: true
+        default: 'ad-hoc'
+        type: choice
+        options:
+          - development
+          - ad-hoc
+          - app-store
+          - enterprise
+
+env:
+  XCODE_VERSION: '15.0'
+  IOS_DEPLOYMENT_TARGET: '13.0'
+
+jobs:
+  build-and-release-ios:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: ${{ env.XCODE_VERSION }}
+
+    - name: Setup Java 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v2
+      with:
+        gradle-version: wrapper
+
+    # Install Apple certificates and provisioning profiles
+    - name: Install Apple Certificate
+      if: ${{ secrets.IOS_CERTIFICATE_BASE64 != '' }}
+      uses: apple-actions/import-codesign-certs@v2
+      with:
+        p12-file-base64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+        p12-password: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+
+    - name: Install Provisioning Profile
+      if: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
+      uses: apple-actions/download-provisioning-profiles@v2
+      with:
+        bundle-id: ${{ secrets.IOS_BUNDLE_ID }}
+        issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
+        api-key-id: ${{ secrets.APPSTORE_KEY_ID }}
+        api-private-key: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+
+    - name: Cache Kotlin/Native prebuilt
+      uses: actions/cache@v4
+      with:
+        path: ~/.konan
+        key: ${{ runner.os }}-konan-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-konan-
+
+    - name: Cache Gradle dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+
+    - name: Build KMP Shared Framework
+      run: |
+        ./gradlew :shared:assembleXCFramework
+
+    - name: Update Bundle Version
+      run: |
+        cd iosApp
+        # Extract version from git tag or use current date
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/v}
+        else
+          VERSION=$(date +%Y.%m.%d.%H%M)
+        fi
+        
+        # Update version in project files if needed
+        echo "Building version: $VERSION"
+
+    - name: Build iOS App Archive
+      run: |
+        cd iosApp
+        
+        # Determine build configuration
+        EXPORT_METHOD="${{ github.event.inputs.export_method || 'ad-hoc' }}"
+        
+        if [[ "$EXPORT_METHOD" == "app-store" ]]; then
+          CONFIGURATION="Release"
+        else
+          CONFIGURATION="Release"
+        fi
+        
+        xcodebuild -project iosApp.xcodeproj \
+          -scheme iosApp \
+          -configuration $CONFIGURATION \
+          -destination 'generic/platform=iOS' \
+          -archivePath build/iosApp.xcarchive \
+          archive
+
+    - name: Export Signed IPA
+      run: |
+        cd iosApp
+        
+        # Get export method from input or default to ad-hoc
+        EXPORT_METHOD="${{ github.event.inputs.export_method || 'ad-hoc' }}"
+        
+        # Create export options plist
+        cat > export-options.plist << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>method</key>
+          <string>$EXPORT_METHOD</string>
+          <key>teamID</key>
+          <string>\${{ secrets.IOS_TEAM_ID }}</string>
+          <key>uploadBitcode</key>
+          <false/>
+          <key>uploadSymbols</key>
+          <true/>
+          <key>compileBitcode</key>
+          <false/>
+          <key>stripSwiftSymbols</key>
+          <true/>
+        </dict>
+        </plist>
+        EOF
+        
+        # Export the IPA
+        xcodebuild -exportArchive \
+          -archivePath build/iosApp.xcarchive \
+          -exportPath build/ \
+          -exportOptionsPlist export-options.plist
+
+    - name: Rename IPA file
+      run: |
+        cd iosApp/build
+        if [ -f iosApp.ipa ]; then
+          VERSION_TAG=${GITHUB_REF#refs/tags/}
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            mv iosApp.ipa "CareHome-${VERSION_TAG}.ipa"
+          else
+            mv iosApp.ipa "CareHome-$(date +%Y%m%d-%H%M).ipa"
+          fi
+        fi
+
+    - name: Upload IPA to Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ios-release-${{ github.run_number }}
+        path: |
+          iosApp/build/*.ipa
+          iosApp/build/iosApp.xcarchive
+        retention-days: 30
+
+    # Upload to App Store Connect (only for app-store export method)
+    - name: Upload to App Store Connect
+      if: ${{ github.event.inputs.export_method == 'app-store' && secrets.APPSTORE_KEY_ID != '' }}
+      run: |
+        cd iosApp/build
+        xcrun altool --upload-app \
+          --type ios \
+          --file *.ipa \
+          --apiKey ${{ secrets.APPSTORE_KEY_ID }} \
+          --apiIssuer ${{ secrets.APPSTORE_ISSUER_ID }}
+
+    # Create GitHub Release (only for tags)
+    - name: Create GitHub Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          iosApp/build/*.ipa
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
