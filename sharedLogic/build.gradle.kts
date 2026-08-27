@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 
 plugins {
   alias(libs.plugins.kotlin.multiplatform)
@@ -16,10 +17,24 @@ kotlin {
     androidResources { enable = true }
   }
 
-  // iOS targets
-  iosX64()         // for Intel simulators
-  iosArm64()       // for real devices
-  iosSimulatorArm64() // for M1/M2 simulators
+  // iOS targets with XCFramework configuration
+  iosX64()
+  iosArm64()
+  iosSimulatorArm64()
+
+  // Configure XCFramework
+  val xcf = XCFramework()
+  listOf(
+    iosX64(),
+    iosArm64(), 
+    iosSimulatorArm64()
+  ).forEach { target ->
+    target.binaries.framework {
+      baseName = "SharedLogic"
+      isStatic = true
+      xcf.add(this)
+    }
+  }
 
   sourceSets {
     commonMain.dependencies {
