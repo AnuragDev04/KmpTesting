@@ -23,9 +23,10 @@ kotlin {
   // Configure XCFramework
   val xcframeworkName = "SharedLogic"
   val xcf = XCFramework(xcframeworkName)
+  
   listOf(
-    iosArm64(),
-    iosSimulatorArm64()
+    targets.getByName("iosArm64"),
+    targets.getByName("iosSimulatorArm64")
   ).forEach { target ->
     target.binaries.framework {
       baseName = xcframeworkName
