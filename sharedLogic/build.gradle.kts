@@ -19,6 +19,19 @@ kotlin {
   iosArm64()
   iosSimulatorArm64()
 
+  // Configure XCFramework
+  val xcframeworkName = "SharedLogic"
+  val xcf = XCFramework(xcframeworkName)
+  listOf(
+    iosArm64(),
+    iosSimulatorArm64()
+  ).forEach { target ->
+    target.binaries.framework {
+      baseName = xcframeworkName
+      xcf.add(this)
+    }
+  }
+
   sourceSets {
     commonMain.dependencies {
       implementation(libs.kotlinx.coroutines.core)
