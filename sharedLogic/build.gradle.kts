@@ -12,7 +12,7 @@ kotlin {
     namespace = "com.example.sharedlogic"
     compileSdk = 36
     minSdk = 24
-    compilerOptions { jvmTarget = JvmTarget.JVM_11 }
+    compilerOptions { jvmTarget = JvmTarget.JVM_17 }
     androidResources { enable = true }
   }
 

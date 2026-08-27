@@ -43,6 +43,9 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
+    - name: Make Gradle Wrapper Executable
+      run: chmod +x ./gradlew
+
     - name: Setup Gradle
       uses: gradle/gradle-build-action@v2
       with:
@@ -69,7 +72,12 @@ jobs:
     - name: Build KMP Shared Framework
       run: |
         echo "Building shared framework..."
-        ./gradlew :sharedLogic:assembleXCFramework --no-daemon --stacktrace
+        echo "Java version:"
+        java -version
+        echo "Gradle version:"
+        ./gradlew --version
+        echo "Starting XCFramework build..."
+        ./gradlew :sharedLogic:assembleXCFramework --no-daemon --stacktrace --info
         echo "Checking generated frameworks..."
         find . -name "*.xcframework" -type d
         
