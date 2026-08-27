@@ -16,16 +16,10 @@ kotlin {
     androidResources { enable = true }
   }
 
-  iosArm64()
-  iosSimulatorArm64()
-
-  targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget> {
-    binaries {
-      framework {
-        baseName = "SharedLogic"
-      }
-    }
-  }
+  // iOS targets
+  iosX64()         // for Intel simulators
+  iosArm64()       // for real devices
+  iosSimulatorArm64() // for M1/M2 simulators
 
   sourceSets {
     commonMain.dependencies {
@@ -38,6 +32,9 @@ kotlin {
       implementation(libs.okhttp)
       implementation(libs.moshi.kotlin)
       implementation(libs.retrofit)
+    }
+    iosMain.dependencies {
+      // iOS-specific dependencies if needed
     }
   }
 }
