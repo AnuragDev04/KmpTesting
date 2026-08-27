@@ -1,0 +1,30 @@
+Starting a Gradle Daemon, 1 incompatible and 4 stopped Daemons could not be reused, use --status for details
+Calculating task graph as no cached configuration is available for tasks: :androidApp:assembleDebug
+
+1 problem was found storing the configuration cache.
+- Task `:androidApp:processDebugNavigationResources` of type `com.android.build.gradle.internal.tasks.ProcessNavigationXmlTask`: error writing value of type 'org.gradle.api.internal.file.collections.DefaultConfigurableFileCollection'
+
+See the complete report at file:///home/runner/workspace/build/reports/configuration-cache/5yksnuxd88i0lkt8vsd9z5ha1/23conxdmxdna2j44q7rfwkluq/configuration-cache-report.html
+
+[Incubating] Problems report is available at: file:///home/runner/workspace/build/reports/problems/problems-report.html
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Configuration cache state could not be cached: field `__runtimeDependenciesNavigationFiles__` of task `:androidApp:processDebugNavigationResources` of type `com.android.build.gradle.internal.tasks.ProcessNavigationXmlTask`: error writing value of type 'org.gradle.api.internal.file.collections.DefaultConfigurableFileCollection'
+> Could not resolve all files for configuration ':androidApp:debugRuntimeClasspath'.
+   > Could not find androidx.compose.material3:material3:.
+     Required by:
+         project ':androidApp'
+   > Could not find androidx.compose.material:material-icons-extended:.
+     Required by:
+         project ':androidApp'
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 48s
+Configuration cache entry discarded due to serialization error.

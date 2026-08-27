@@ -120,7 +120,6 @@ fun ConfirmBookingScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .statusBarsPadding()
                     .padding(horizontal = 8.dp, vertical = 8.dp)
             ) {
                 IconButton(

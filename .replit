@@ -19,9 +19,9 @@ args = "Build Android app"
 name = "Build Android app"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "./gradlew :androidApp:assembleDebug"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "export JAVA_HOME=$HOME/jdk17 && export PATH=$JAVA_HOME/bin:$PATH && ./gradlew :androidApp:assembleDebug"

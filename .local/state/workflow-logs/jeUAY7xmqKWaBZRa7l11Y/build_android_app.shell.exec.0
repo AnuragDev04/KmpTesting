@@ -1,0 +1,27 @@
+Starting a Gradle Daemon, 1 incompatible and 5 stopped Daemons could not be reused, use --status for details
+Calculating task graph as no cached configuration is available for tasks: :androidApp:assembleDebug
+
+1 problem was found storing the configuration cache.
+- Task `:androidApp:compileDebugJavaWithJavac` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type 'org.gradle.api.internal.provider.TransformBackedProvider'
+
+See the complete report at file:///home/runner/workspace/build/reports/configuration-cache/5yksnuxd88i0lkt8vsd9z5ha1/3v2i78fdzbcv6sqd3dkzawmqa/configuration-cache-report.html
+
+[Incubating] Problems report is available at: file:///home/runner/workspace/build/reports/problems/problems-report.html
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Configuration cache state could not be cached: field `generatedModuleFile` of `com.android.build.gradle.tasks.JdkImageInput` bean found in field `compilerArgumentProviders` of `org.gradle.api.tasks.compile.CompileOptions_Decorated` bean found in field `capturedArgs` of `java.lang.invoke.SerializedLambda` bean found in field `spec` of `org.gradle.api.internal.tasks.execution.SelfDescribingSpec` bean found in task `:androidApp:compileDebugJavaWithJavac` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type 'org.gradle.api.internal.provider.TransformBackedProvider'
+> Could not resolve all files for configuration ':androidApp:androidJdkImage'.
+   > Failed to transform core-for-system-modules.jar to match attributes {artifactType=_internal_android_jdk_image, org.gradle.libraryelements=jar, org.gradle.usage=java-runtime}.
+      > Execution failed for JdkImageTransform: /home/runner/android-sdk/platforms/android-36/core-for-system-modules.jar.
+         > Error while executing process /nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1/bin/jlink with arguments {--module-path /home/runner/.gradle/caches/9.3.1/transforms/71d9527c253e1972de340c40e4e07d45-4a4ee460-b105-48af-8149-54090f2c6b38/transformed/output/temp/jmod --add-modules java.base --output /home/runner/.gradle/caches/9.3.1/transforms/71d9527c253e1972de340c40e4e07d45-4a4ee460-b105-48af-8149-54090f2c6b38/transformed/output/jdkImage --disable-plugin system-modules}
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 1m 1s
+Configuration cache entry discarded due to serialization error.

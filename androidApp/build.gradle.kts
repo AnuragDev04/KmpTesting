@@ -52,7 +52,7 @@ android {
 dependencies {
   implementation(project(":sharedLogic"))
   implementation(libs.androidx.activity.compose)
-  implementation(libs.androidx.compose.bom)
+  implementation(platform(libs.androidx.compose.bom))
   implementation(libs.androidx.compose.material3)
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
@@ -68,8 +68,11 @@ dependencies {
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.androidx.core.ktx)
   implementation(libs.retrofit)
+  implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.room.ktx)
   debugImplementation(libs.androidx.compose.ui.tooling)
 
+  testImplementation(platform(libs.androidx.compose.bom))
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
@@ -79,6 +82,7 @@ dependencies {
   testImplementation(libs.roborazzi)
   testImplementation(libs.roborazzi.compose)
   testImplementation(libs.roborazzi.junit.rule)
+  androidTestImplementation(platform(libs.androidx.compose.bom))
   androidTestImplementation(libs.androidx.compose.ui.test.junit4)
   androidTestImplementation(libs.androidx.espresso.core)
   androidTestImplementation(libs.androidx.junit)

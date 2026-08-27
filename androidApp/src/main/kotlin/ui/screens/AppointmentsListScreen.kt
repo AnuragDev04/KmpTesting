@@ -70,7 +70,6 @@ fun AppointmentsListScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .statusBarsPadding()
                         .height(56.dp)
                         .padding(horizontal = 16.dp),
                     contentAlignment = Alignment.Center

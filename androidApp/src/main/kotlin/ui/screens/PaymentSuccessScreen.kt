@@ -119,7 +119,6 @@ fun PaymentSuccessScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .statusBarsPadding()
                 .navigationBarsPadding(),
             contentAlignment = Alignment.Center
         ) {
