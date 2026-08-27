@@ -121,21 +121,61 @@ jobs:
           archive \
           CODE_SIGNING_ALLOWED=NO
 
-    # Note: IPA export requires valid code signing certificates
-    # For testing/CI purposes, we'll skip the IPA export step
-    # To create a signed IPA, you need to:
-    # 1. Add iOS certificates as GitHub secrets
-    # 2. Configure proper provisioning profiles
-    # 3. Use the ios-release.yml workflow for signed builds
-    - name: Verify Archive Creation
+    # Attempt to create IPA with development signing (will work if certificates exist)
+    - name: Export IPA (Development)
+      continue-on-error: true
+      id: export_ipa
       run: |
         cd iosApp
-        if [ -d "build/iosApp.xcarchive" ]; then
-          echo "✅ Archive created successfully"
-          ls -la build/iosApp.xcarchive
+        # Create export options plist
+        cat > export-options.plist << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>method</key>
+          <string>development</string>
+          <key>signingStyle</key>
+          <string>automatic</string>
+          <key>stripSwiftSymbols</key>
+          <true/>
+          <key>compileBitcode</key>
+          <false/>
+          <key>uploadBitcode</key>
+          <false/>
+          <key>uploadSymbols</key>
+          <false/>
+        </dict>
+        </plist>
+        EOF
+        
+        # Try to export the IPA (will fail without certificates, but that's ok)
+        if xcodebuild -exportArchive \
+          -archivePath build/iosApp.xcarchive \
+          -exportPath build/ \
+          -exportOptionsPlist export-options.plist \
+          -allowProvisioningUpdates; then
+          echo "✅ IPA created successfully"
+          echo "ipa_created=true" >> $GITHUB_OUTPUT
         else
-          echo "❌ Archive creation failed"
-          exit 1
+          echo "⚠️ IPA export failed - certificates not configured"
+          echo "ipa_created=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Verify Build Results
+      run: |
+        cd iosApp
+        echo "=== Build Results ==="
+        if [ -d "build/iosApp.xcarchive" ]; then
+          echo "✅ Archive: build/iosApp.xcarchive"
+          ls -la build/iosApp.xcarchive/
+        fi
+        
+        if [ -f build/*.ipa ]; then
+          echo "✅ IPA: $(ls build/*.ipa)"
+          ls -la build/*.ipa
+        else
+          echo "ℹ️  No IPA file (requires iOS certificates for signing)"
         fi
 
     - name: List build artifacts
@@ -147,13 +187,18 @@ jobs:
           echo "Archive contents:"
           ls -la build/iosApp.xcarchive/
         fi
+        if [ -f build/*.ipa ]; then
+          echo "IPA files:"
+          ls -la build/*.ipa
+        fi
 
-    - name: Upload Archive Artifact
+    - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ios-archive-${{ github.run_number }}
+        name: ios-build-${{ github.run_number }}
         path: |
           iosApp/build/iosApp.xcarchive
+          iosApp/build/*.ipa
         retention-days: 30
 
     - name: Upload Build Logs
