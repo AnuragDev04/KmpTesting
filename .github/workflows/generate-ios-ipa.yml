@@ -1,45 +1,45 @@
-name: 📱 Generate iOS IPA
+name: 📱 iOS IPA Builder (KMP)
 
-# This workflow creates iOS IPA files from your Kotlin Multiplatform project
-# Designed for Windows developers who want to test their KMP app on iOS devices
-# No macOS or Apple Developer account required!
+# Creates working iOS IPA files from Kotlin Multiplatform projects
+# Fixed version - properly embeds SharedLogic framework in IPA
+# For Windows developers targeting iOS devices via sideloading
 
 on:
-  # Manual trigger - click "Run workflow" to generate IPA
+  # Manual trigger - click "Run workflow" button
   workflow_dispatch:
     inputs:
       app_name:
-        description: 'App Name (displayed on iOS)'
+        description: 'App Display Name'
         required: true
         default: 'CareHome'
       bundle_id:
-        description: 'Bundle ID (com.yourname.appname)'
+        description: 'Bundle Identifier (reverse domain)'
         required: true
         default: 'com.example.carehome'
       version:
-        description: 'App Version'
+        description: 'Version Number'
         required: true
         default: '1.0.0'
 
-  # Auto trigger on code changes
+  # Auto-trigger on important changes
   push:
     branches: [ main, master ]
     paths:
       - 'sharedLogic/**'
       - 'iosApp/**'
-      - 'androidApp/**'
 
 jobs:
   build-ios-ipa:
-    name: 🍎 Build iOS IPA
+    name: 🔨 Build iOS IPA
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 40
     
     steps:
-    # ================================
-    # SETUP PHASE
-    # ================================
-    - name: 📥 Checkout Code
+    # ================================================
+    # SETUP AND PREPARATION
+    # ================================================
+    
+    - name: 📥 Checkout Repository
       uses: actions/checkout@v4
 
     - name: ☕ Setup Java 17
@@ -49,65 +49,86 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: 🔧 Setup Environment
+    - name: 🛠️ Environment Setup
       run: |
-        echo "🏗️ Setting up build environment..."
+        echo "🔧 Setting up build environment..."
+        
+        # Make gradlew executable
         chmod +x ./gradlew
         
-        # Display environment info
-        echo "📋 Build Environment:"
-        echo "   Xcode: $(xcodebuild -version | head -1)"
-        echo "   Java: $(java -version 2>&1 | head -1)"
-        echo "   Gradle: $(./gradlew --version | grep 'Gradle' | head -1)"
-        
-        # Set app configuration
+        # Set app configuration from inputs
         APP_NAME="${{ github.event.inputs.app_name || 'CareHome' }}"
         BUNDLE_ID="${{ github.event.inputs.bundle_id || 'com.example.carehome' }}"
         VERSION="${{ github.event.inputs.version || '1.0.0' }}"
         BUILD_NUM="${{ github.run_number }}"
         
-        echo "📱 App Configuration:"
-        echo "   Name: $APP_NAME"
-        echo "   Bundle ID: $BUNDLE_ID"
-        echo "   Version: $VERSION"
-        echo "   Build: $BUILD_NUM"
+        echo "📱 Configuration:"
+        echo "  App Name: $APP_NAME"
+        echo "  Bundle ID: $BUNDLE_ID" 
+        echo "  Version: $VERSION"
+        echo "  Build: $BUILD_NUM"
         
         # Export for later steps
         echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
         echo "BUNDLE_ID=$BUNDLE_ID" >> $GITHUB_ENV
         echo "VERSION=$VERSION" >> $GITHUB_ENV
         echo "BUILD_NUM=$BUILD_NUM" >> $GITHUB_ENV
-
-    # ================================
-    # BUILD KOTLIN MULTIPLATFORM
-    # ================================
-    - name: 🏗️ Build Shared Framework
-      run: |
-        echo "🔨 Building Kotlin Multiplatform shared framework..."
         
-        # Build the XCFramework for iOS
-        ./gradlew :sharedLogic:assembleXCFramework --no-daemon --stacktrace
+        # Display system info
+        echo "🖥️ Build System:"
+        echo "  Xcode: $(xcodebuild -version | head -1)"
+        echo "  Swift: $(xcrun swift --version | head -1)"
+        echo "  Java: $(java -version 2>&1 | head -1)"
+
+    # ================================================
+    # BUILD KOTLIN MULTIPLATFORM FRAMEWORK
+    # ================================================
+    
+    - name: 🏗️ Build SharedLogic Framework
+      run: |
+        echo "🔨 Building Kotlin Multiplatform framework..."
+        
+        # Build the iOS framework using Gradle
+        ./gradlew :sharedLogic:assembleXCFramework --stacktrace --no-daemon --warning-mode=all
         
         # Verify framework was created
-        if [ -d "sharedLogic/build/XCFrameworks" ] || find sharedLogic -name "*.xcframework" | grep -q .; then
-          echo "✅ Shared framework built successfully"
-          find sharedLogic -name "*.xcframework" | head -3
+        echo "🔍 Looking for built framework..."
+        
+        if find sharedLogic/build -name "SharedLogic.xcframework" -type d | head -1; then
+          FRAMEWORK_PATH=$(find sharedLogic/build -name "SharedLogic.xcframework" -type d | head -1)
+          echo "✅ Found XCFramework: $FRAMEWORK_PATH"
+          
+          # Show framework structure
+          echo "📂 Framework structure:"
+          ls -la "$FRAMEWORK_PATH"
+          
+          # Export framework path for later use
+          echo "FRAMEWORK_PATH=$FRAMEWORK_PATH" >> $GITHUB_ENV
+          
+        elif find sharedLogic/build -name "SharedLogic.framework" -type d | head -1; then
+          FRAMEWORK_PATH=$(find sharedLogic/build -name "SharedLogic.framework" -type d | head -1)
+          echo "✅ Found regular Framework: $FRAMEWORK_PATH"
+          echo "FRAMEWORK_PATH=$FRAMEWORK_PATH" >> $GITHUB_ENV
+          
         else
-          echo "❌ Shared framework build failed"
+          echo "❌ No SharedLogic framework found!"
+          echo "🔍 Available build outputs:"
+          find sharedLogic/build -name "*.framework" -o -name "*.xcframework" | head -10
           exit 1
         fi
 
-    # ================================
+    # ================================================
     # CONFIGURE iOS PROJECT
-    # ================================
-    - name: 📱 Configure iOS App
+    # ================================================
+    
+    - name: ⚙️ Configure iOS Project
       run: |
         cd iosApp
         
-        echo "⚙️ Configuring iOS project..."
+        echo "📱 Configuring iOS project with user settings..."
         
-        # Create proper Info.plist with user configuration
-        cat > iosApp/Info.plist << EOF
+        # Update Info.plist with user configuration
+        cat > iosApp/Info.plist << 'EOF'
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0">
@@ -117,7 +138,7 @@ jobs:
             <key>CFBundleDisplayName</key>
             <string>${{ env.APP_NAME }}</string>
             <key>CFBundleExecutable</key>
-            <string>iosApp</string>
+            <string>$(EXECUTABLE_NAME)</string>
             <key>CFBundleIdentifier</key>
             <string>${{ env.BUNDLE_ID }}</string>
             <key>CFBundleInfoDictionaryVersion</key>
@@ -132,8 +153,17 @@ jobs:
             <string>${{ env.BUILD_NUM }}</string>
             <key>LSRequiresIPhoneOS</key>
             <true/>
-            <key>UILaunchStoryboardName</key>
-            <string>LaunchScreen</string>
+            <key>UIApplicationSceneManifest</key>
+            <dict>
+                <key>UIApplicationSupportsMultipleScenes</key>
+                <true/>
+                <key>UISceneConfigurations</key>
+                <dict/>
+            </dict>
+            <key>UIApplicationSupportsIndirectInputEvents</key>
+            <true/>
+            <key>UILaunchScreen</key>
+            <dict/>
             <key>UIRequiredDeviceCapabilities</key>
             <array>
                 <string>armv7</string>
@@ -151,302 +181,354 @@ jobs:
                 <string>UIInterfaceOrientationLandscapeLeft</string>
                 <string>UIInterfaceOrientationLandscapeRight</string>
             </array>
-            <key>CADisableMinimumFrameDurationOnPhone</key>
-            <true/>
         </dict>
         </plist>
         EOF
         
-        echo "✅ iOS project configured successfully"
+        echo "✅ iOS project configured"
 
-    # ================================
-    # BUILD iOS APP (UNSIGNED)
-    # ================================
+    # ================================================
+    # BUILD iOS APPLICATION
+    # ================================================
+    
     - name: 🔨 Build iOS App
       run: |
         cd iosApp
         
-        echo "🔨 Building iOS app for devices..."
+        echo "🏗️ Building iOS application..."
         
-        # Clean any previous builds
+        # Clean previous builds
         rm -rf build/
-        mkdir -p build
+        mkdir -p build/output
         
-        # First verify that the shared framework exists
-        echo "🔍 Checking for shared framework..."
-        if find ../sharedLogic -name "SharedLogic.xcframework" | head -1; then
-          FRAMEWORK_PATH=$(find ../sharedLogic -name "SharedLogic.xcframework" | head -1)
-          echo "✅ Found SharedLogic framework at: $FRAMEWORK_PATH"
-          
-          # Create a temporary framework directory for Xcode to find
-          mkdir -p build/Frameworks
-          ln -sf "$(realpath "$FRAMEWORK_PATH")" build/Frameworks/SharedLogic.xcframework
-          
-          echo "🔗 Framework linked for build"
-        else
-          echo "❌ SharedLogic framework not found!"
-          echo "🔍 Available framework files:"
-          find ../sharedLogic/build -name "*.framework" -o -name "*.xcframework" | head -10
-          exit 1
-        fi
+        # Determine correct framework path for embedding
+        SHARED_FRAMEWORK_PATH="../${{ env.FRAMEWORK_PATH }}"
+        echo "📦 Framework source: $SHARED_FRAMEWORK_PATH"
         
-        # Build iOS app without code signing (works on GitHub Actions)
-        # Add framework search path to help Xcode find our framework
-        xcodebuild \
+        # Build iOS app without code signing
+        echo "🔨 Running xcodebuild..."
+        set -o pipefail
+        
+        xcodebuild clean build \
           -project iosApp.xcodeproj \
           -scheme iosApp \
           -configuration Release \
           -sdk iphoneos \
           -destination 'generic/platform=iOS' \
           -derivedDataPath build/DerivedData \
-          FRAMEWORK_SEARCH_PATHS="$(pwd)/build/Frameworks $(pwd)/../sharedLogic/build/XCFrameworks/release $(pwd)/../sharedLogic/build/XCFrameworks/debug" \
+          -allowProvisioningUpdates \
+          FRAMEWORK_SEARCH_PATHS="../sharedLogic/build/XCFrameworks/release ../sharedLogic/build/bin/iosArm64/releaseFramework" \
           CODE_SIGNING_ALLOWED=NO \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGN_IDENTITY="" \
           PROVISIONING_PROFILE="" \
           DEVELOPMENT_TEAM="" \
-          build 2>&1 | tee build.log
+          PRODUCT_NAME="${{ env.APP_NAME }}" \
+          PRODUCT_BUNDLE_IDENTIFIER="${{ env.BUNDLE_ID }}" \
+        | tee build/xcodebuild.log
         
         # Check if build succeeded
-        if [ ${PIPESTATUS[0]} -eq 0 ]; then
-          echo "✅ iOS app built successfully"
-          
-          # Find the built app
-          APP_PATH=$(find build/DerivedData/Build/Products/Release-iphoneos -name "*.app" | head -1)
-          if [ -n "$APP_PATH" ]; then
-            echo "📱 App location: $APP_PATH"
-            echo "📋 App bundle contents:"
-            ls -la "$APP_PATH"
-            
-            # Ensure SharedLogic framework is embedded
-            if [ ! -d "$APP_PATH/Frameworks" ]; then
-              echo "⚠️ Creating Frameworks directory in app bundle"
-              mkdir -p "$APP_PATH/Frameworks"
-            fi
-            
-            # Copy SharedLogic framework if not already there
-            if [ ! -d "$APP_PATH/Frameworks/SharedLogic.framework" ]; then
-              echo "📦 Manually embedding SharedLogic framework..."
-              
-              if [ -d "$FRAMEWORK_PATH/ios-arm64/SharedLogic.framework" ]; then
-                cp -R "$FRAMEWORK_PATH/ios-arm64/SharedLogic.framework" "$APP_PATH/Frameworks/"
-                echo "✅ Embedded iOS arm64 framework"
-              elif [ -d "$FRAMEWORK_PATH/ios-arm64_x86_64-maccatalyst/SharedLogic.framework" ]; then
-                cp -R "$FRAMEWORK_PATH/ios-arm64_x86_64-maccatalyst/SharedLogic.framework" "$APP_PATH/Frameworks/"
-                echo "✅ Embedded Mac Catalyst framework"
-              else
-                echo "❌ Could not find suitable framework variant"
-                ls -la "$FRAMEWORK_PATH/"
-                exit 1
-              fi
-            fi
-            
-            echo "✅ Final app bundle with framework:"
-            ls -la "$APP_PATH/Frameworks/"
-          else
-            echo "❌ Built app not found"
-            exit 1
-          fi
-        else
-          echo "❌ iOS build failed"
-          echo "📋 Build log:"
-          tail -50 build.log
+        if [ ${PIPESTATUS[0]} -ne 0 ]; then
+          echo "❌ iOS build failed!"
+          echo "📋 Last 30 lines of build log:"
+          tail -30 build/xcodebuild.log
           exit 1
         fi
+        
+        echo "✅ iOS app built successfully"
+        
+        # Find the built app
+        APP_PATH=$(find build/DerivedData/Build/Products/Release-iphoneos -name "*.app" -type d | head -1)
+        
+        if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+          echo "❌ Built app not found!"
+          echo "🔍 Looking for build products:"
+          find build/DerivedData -name "*.app" -type d | head -5
+          exit 1
+        fi
+        
+        echo "📱 Found app: $APP_PATH"
+        echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
+        
+        # Check current app contents
+        echo "📂 Current app contents:"
+        ls -la "$APP_PATH"
 
-    # ================================
+    # ================================================
+    # EMBED SHAREDLOGIC FRAMEWORK
+    # ================================================
+    
+    - name: 📦 Embed SharedLogic Framework
+      run: |
+        cd iosApp
+        
+        echo "📦 Embedding SharedLogic framework in app bundle..."
+        
+        APP_PATH="${{ env.APP_PATH }}"
+        FRAMEWORK_SOURCE="../${{ env.FRAMEWORK_PATH }}"
+        
+        echo "📍 App path: $APP_PATH"
+        echo "📍 Framework source: $FRAMEWORK_SOURCE"
+        
+        # Create Frameworks directory if it doesn't exist
+        mkdir -p "$APP_PATH/Frameworks"
+        
+        # Determine which framework variant to embed for iOS device
+        if [[ "$FRAMEWORK_SOURCE" == *".xcframework"* ]]; then
+          echo "📦 Handling XCFramework..."
+          
+          # For XCFramework, find the iOS device framework
+          IOS_FRAMEWORK=""
+          
+          # Look for iOS arm64 framework (device)
+          if [ -d "$FRAMEWORK_SOURCE/ios-arm64/SharedLogic.framework" ]; then
+            IOS_FRAMEWORK="$FRAMEWORK_SOURCE/ios-arm64/SharedLogic.framework"
+            echo "✅ Found iOS arm64 framework"
+          elif [ -d "$FRAMEWORK_SOURCE/ios-arm64_x86_64-simulator/SharedLogic.framework" ]; then
+            IOS_FRAMEWORK="$FRAMEWORK_SOURCE/ios-arm64_x86_64-simulator/SharedLogic.framework"
+            echo "⚠️ Using simulator framework (may not work on device)"
+          else
+            echo "🔍 Available framework variants:"
+            ls -la "$FRAMEWORK_SOURCE/" || true
+            echo "❌ No suitable iOS framework found in XCFramework"
+            exit 1
+          fi
+          
+          # Copy the iOS framework to app
+          echo "📋 Copying framework: $IOS_FRAMEWORK"
+          cp -R "$IOS_FRAMEWORK" "$APP_PATH/Frameworks/"
+          
+        else
+          echo "📦 Handling regular .framework..."
+          
+          # For regular framework, copy directly
+          cp -R "$FRAMEWORK_SOURCE" "$APP_PATH/Frameworks/"
+        fi
+        
+        # Verify framework was embedded
+        if [ ! -d "$APP_PATH/Frameworks/SharedLogic.framework" ]; then
+          echo "❌ Framework embedding failed!"
+          echo "🔍 App Frameworks directory:"
+          ls -la "$APP_PATH/Frameworks/" || echo "Frameworks directory not found"
+          exit 1
+        fi
+        
+        echo "✅ SharedLogic framework embedded successfully"
+        
+        # Show final app structure
+        echo "📂 Final app bundle structure:"
+        ls -la "$APP_PATH"
+        echo "📂 Embedded frameworks:"
+        ls -la "$APP_PATH/Frameworks"
+        
+        # Verify framework binary exists
+        if [ -f "$APP_PATH/Frameworks/SharedLogic.framework/SharedLogic" ]; then
+          echo "✅ Framework binary confirmed"
+        else
+          echo "⚠️ Framework binary not found"
+          ls -la "$APP_PATH/Frameworks/SharedLogic.framework"
+        fi
+    # ================================================
     # CREATE IPA FILE
-    # ================================
-    - name: 📦 Create IPA File
-      id: create_ipa
+    # ================================================
+    
+    - name: 📦 Create IPA Package
+      id: create-ipa
       run: |
         cd iosApp
         
         echo "📦 Creating IPA file..."
         
-        # Find the built app
-        APP_PATH=$(find build/DerivedData/Build/Products/Release-iphoneos -name "*.app" | head -1)
+        APP_PATH="${{ env.APP_PATH }}"
         
-        if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
-          echo "❌ No app found to package"
-          echo "🔍 Checking build products:"
-          find build/DerivedData -name "*.app" | head -10
-          exit 1
-        fi
+        # Create IPA structure (standard iOS app package format)
+        mkdir -p ipa_temp/Payload
         
-        echo "📱 Found app: $APP_PATH"
+        # Copy app bundle to Payload directory
+        cp -R "$APP_PATH" ipa_temp/Payload/
         
-        # Final verification of app bundle
-        echo "📋 Final app bundle contents:"
-        ls -la "$APP_PATH/"
-        if [ -d "$APP_PATH/Frameworks" ]; then
-          echo "📦 Embedded frameworks:"
-          ls -la "$APP_PATH/Frameworks/"
-        fi
+        # Generate IPA filename with timestamp
+        TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+        IPA_NAME="${{ env.APP_NAME }}_v${{ env.VERSION }}_b${{ env.BUILD_NUM }}_${TIMESTAMP}.ipa"
         
-        # Create IPA structure
-        # IPA is just a ZIP file with a specific structure: Payload/AppName.app
-        mkdir -p ipa/Payload
+        echo "📄 IPA filename: $IPA_NAME"
         
-        # Copy app to Payload directory  
-        cp -R "$APP_PATH" ipa/Payload/
-        
-        # Create IPA filename with timestamp
-        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-        IPA_FILENAME="${{ env.APP_NAME }}_v${{ env.VERSION }}_${TIMESTAMP}.ipa"
-        
-        echo "📦 Creating IPA: $IPA_FILENAME"
-        
-        # Create the IPA file (just ZIP the Payload folder)
-        cd ipa
-        zip -r "../$IPA_FILENAME" Payload/
+        # Create the IPA (ZIP file with .ipa extension)
+        cd ipa_temp
+        zip -r "../$IPA_NAME" Payload/ -q
         cd ..
         
         # Verify IPA was created
-        if [ -f "$IPA_FILENAME" ]; then
-          IPA_SIZE=$(ls -lh "$IPA_FILENAME" | awk '{print $5}')
-          echo "✅ IPA created successfully!"
-          echo "📊 IPA Details:"
-          echo "   File: $IPA_FILENAME"
-          echo "   Size: $IPA_SIZE"
-          echo "   Type: Unsigned (for sideloading)"
-          echo "   Includes: SharedLogic framework embedded"
-          
-          # Verify IPA structure
-          echo "🔍 Verifying IPA structure..."
-          unzip -l "$IPA_FILENAME" | grep -E "(Payload|\.app|Frameworks|SharedLogic)" | head -10
-          
-          # Export info for artifacts
-          echo "ipa_created=true" >> $GITHUB_OUTPUT
-          echo "ipa_filename=$IPA_FILENAME" >> $GITHUB_OUTPUT
-          echo "ipa_size=$IPA_SIZE" >> $GITHUB_OUTPUT
-        else
-          echo "❌ Failed to create IPA"
-          echo "ipa_created=false" >> $GITHUB_OUTPUT
+        if [ ! -f "$IPA_NAME" ]; then
+          echo "❌ Failed to create IPA file"
           exit 1
         fi
+        
+        # Get file size
+        IPA_SIZE=$(ls -lh "$IPA_NAME" | awk '{print $5}')
+        
+        echo "✅ IPA created successfully!"
+        echo "📊 IPA Information:"
+        echo "  📄 File: $IPA_NAME"
+        echo "  📏 Size: $IPA_SIZE"
+        echo "  📱 App: ${{ env.APP_NAME }}"
+        echo "  🆔 Bundle ID: ${{ env.BUNDLE_ID }}"
+        echo "  🔢 Version: ${{ env.VERSION }}"
+        echo "  🏗️ Build: ${{ env.BUILD_NUM }}"
+        
+        # Verify IPA structure
+        echo "🔍 IPA Contents:"
+        unzip -l "$IPA_NAME" | grep -E "(Payload|\.app|SharedLogic)" | head -8
+        
+        # Export variables for artifacts
+        echo "ipa_name=$IPA_NAME" >> $GITHUB_OUTPUT
+        echo "ipa_size=$IPA_SIZE" >> $GITHUB_OUTPUT
+        echo "success=true" >> $GITHUB_OUTPUT
 
-    # ================================
-    # UPLOAD RESULTS
-    # ================================
+    # ================================================
+    # UPLOAD ARTIFACTS
+    # ================================================
+    
     - name: 📤 Upload IPA File
-      if: steps.create_ipa.outputs.ipa_created == 'true'
+      if: steps.create-ipa.outputs.success == 'true'
       uses: actions/upload-artifact@v4
       with:
-        name: 📱 ${{ env.APP_NAME }}-iOS-v${{ env.VERSION }}-build${{ env.BUILD_NUM }}
-        path: iosApp/${{ steps.create_ipa.outputs.ipa_filename }}
+        name: 📱-${{ env.APP_NAME }}-iOS-v${{ env.VERSION }}-build${{ env.BUILD_NUM }}
+        path: iosApp/${{ steps.create-ipa.outputs.ipa_name }}
         retention-days: 30
 
     - name: 📋 Upload Build Logs
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: 🛠️ Build-Logs-${{ env.BUILD_NUM }}
+        name: 🛠️-Build-Logs-${{ env.BUILD_NUM }}
         path: |
-          iosApp/build.log
-          iosApp/build/
+          iosApp/build/xcodebuild.log
+          iosApp/build/DerivedData/Build/Products
         retention-days: 7
+        if-no-files-found: ignore
 
-    # ================================
+    # ================================================
     # SUCCESS SUMMARY
-    # ================================
-    - name: 🎉 Build Summary
-      if: steps.create_ipa.outputs.ipa_created == 'true'
+    # ================================================
+    
+    - name: 🎉 Build Complete
+      if: steps.create-ipa.outputs.success == 'true'
       run: |
         echo ""
-        echo "🎉 SUCCESS! Your iOS IPA has been created!"
-        echo "========================================"
+        echo "🎉 SUCCESS! iOS IPA Created Successfully!"
+        echo "=============================================="
         echo ""
         echo "📱 App Details:"
-        echo "   Name: ${{ env.APP_NAME }}"
-        echo "   Bundle ID: ${{ env.BUNDLE_ID }}"
-        echo "   Version: ${{ env.VERSION }}"
-        echo "   Build: ${{ env.BUILD_NUM }}"
-        echo "   File: ${{ steps.create_ipa.outputs.ipa_filename }}"
-        echo "   Size: ${{ steps.create_ipa.outputs.ipa_size }}"
+        echo "  Name: ${{ env.APP_NAME }}"
+        echo "  Bundle ID: ${{ env.BUNDLE_ID }}"
+        echo "  Version: ${{ env.VERSION }}"
+        echo "  Build Number: ${{ env.BUILD_NUM }}"
+        echo "  File: ${{ steps.create-ipa.outputs.ipa_name }}"
+        echo "  Size: ${{ steps.create-ipa.outputs.ipa_size }}"
         echo ""
-        echo "📥 How to Download:"
-        echo "   1. Scroll down to 'Artifacts' section"
-        echo "   2. Download '📱 ${{ env.APP_NAME }}-iOS-v${{ env.VERSION }}-build${{ env.BUILD_NUM }}'"
-        echo "   3. Extract the ZIP file to get your .ipa"
+        echo "📥 Download Instructions:"
+        echo "  1. Scroll down to 'Artifacts' section"
+        echo "  2. Click '📱-${{ env.APP_NAME }}-iOS-v${{ env.VERSION }}-build${{ env.BUILD_NUM }}'"
+        echo "  3. Extract the downloaded ZIP to get your .ipa file"
         echo ""
-        echo "📲 How to Install on iPhone:"
+        echo "📲 Installation Methods (Sideloading):"
         echo ""
-        echo "   Option 1 - AltStore (iOS):"
-        echo "   • Install AltStore on your iPhone"
-        echo "   • Use AltStore to sideload the IPA"
+        echo "  🪟 Windows Users:"
+        echo "    • Sideloadly (recommended): sideloadly.io"
+        echo "    • 3uTools: 3u.com"
         echo ""
-        echo "   Option 2 - Sideloadly (Windows/Mac):"
-        echo "   • Download Sideloadly from sideloadly.io"
-        echo "   • Connect iPhone and sideload the IPA"
+        echo "  🍎 Mac Users:"
+        echo "    • Xcode: Window → Devices and Simulators → Install App"
         echo ""
-        echo "   Option 3 - 3uTools (Windows):"
-        echo "   • Download 3uTools"
-        echo "   • Use 'Install App' feature"
+        echo "  📱 iPhone Users:"
+        echo "    • AltStore: altstore.io"
         echo ""
-        echo "   Option 4 - Xcode (Mac only):"
-        echo "   • Window → Devices and Simulators"
-        echo "   • Select your device → '+' → Choose IPA"
+        echo "⚠️  Important Notes:"
+        echo "  • This is an UNSIGNED IPA for development/testing"
+        echo "  • Requires sideloading tools to install on iOS devices"
+        echo "  • No Apple Developer account needed to create"
+        echo "  • Apps expire after 7 days (free Apple ID) or 1 year (paid Apple ID)"
         echo ""
-        echo "⚠️  Note: This is an UNSIGNED IPA"
-        echo "   • No Apple Developer account required to create"
-        echo "   • Requires sideloading to install on devices"
-        echo "   • For App Store distribution, you need Apple Developer account"
-        echo ""
+        echo "🔧 Framework Status: ✅ SharedLogic framework embedded"
         echo "🚀 Your Kotlin Multiplatform app is ready for iOS!"
 
-    - name: 📝 Create Release Notes
-      if: steps.create_ipa.outputs.ipa_created == 'true'
+    - name: 📝 Generate Installation Guide
+      if: steps.create-ipa.outputs.success == 'true'
       run: |
-        cat > RELEASE_NOTES.md << EOF
-        # 📱 iOS IPA Release
+        cat > iosApp/INSTALLATION_GUIDE.md << 'EOF'
+        # 📱 iOS Installation Guide
         
         ## App Information
-        - **Name:** ${{ env.APP_NAME }}
+        - **App Name:** ${{ env.APP_NAME }}
         - **Bundle ID:** ${{ env.BUNDLE_ID }}
         - **Version:** ${{ env.VERSION }}
         - **Build:** ${{ env.BUILD_NUM }}
-        - **Date:** $(date)
+        - **Created:** $(date)
         
-        ## Installation Instructions
+        ## 📥 Download Your IPA
+        1. Go to the GitHub Actions run page
+        2. Scroll to the **Artifacts** section
+        3. Download `📱-${{ env.APP_NAME }}-iOS-v${{ env.VERSION }}-build${{ env.BUILD_NUM }}`
+        4. Extract the ZIP file to get your `.ipa` file
         
-        This is an **unsigned IPA** that can be installed via sideloading:
+        ## 📲 Installation Options
         
-        ### For Windows Users:
-        1. **Sideloadly** (Recommended)
-           - Download from sideloadly.io
-           - Connect iPhone via USB
-           - Login with Apple ID and sideload IPA
+        ### Option 1: Sideloadly (Windows/Mac) ⭐ Recommended
+        1. Download Sideloadly from [sideloadly.io](https://sideloadly.io/)
+        2. Connect your iPhone/iPad via USB
+        3. Sign in with your Apple ID
+        4. Drag your `.ipa` file to Sideloadly
+        5. Click "Start" to install
         
-        2. **3uTools**
-           - Download 3uTools
-           - Use "Install App" feature
+        ### Option 2: 3uTools (Windows)
+        1. Download 3uTools from [3u.com](https://www.3u.com/)
+        2. Connect your device
+        3. Go to "Apps" → "Install Local App"
+        4. Select your `.ipa` file
         
-        ### For Mac Users:
-        - **Xcode:** Window → Devices and Simulators → Install App
+        ### Option 3: Xcode (Mac Only)
+        1. Open Xcode
+        2. Go to Window → Devices and Simulators
+        3. Select your connected device
+        4. Click "+" and choose your `.ipa` file
         
-        ### For iOS Users:
-        - **AltStore:** Install AltStore app and sideload
+        ### Option 4: AltStore (iPhone/iPad)
+        1. Install AltStore from [altstore.io](https://altstore.io/)
+        2. Use AltStore to sideload your `.ipa` file
         
-        ## Requirements
-        - iOS 13.0 or later
-        - iPhone/iPad device
-        - Sideloading tool (see above)
+        ## ⚠️ Important Notes
         
-        ## What's Included
-        - Full Kotlin Multiplatform functionality
-        - Native iOS UI with shared business logic
-        - Ready for testing and development
+        ### Signing Requirements
+        - This IPA is **unsigned** (development build)
+        - You need your Apple ID to sign during installation
+        - No paid Apple Developer account required
+        
+        ### App Expiration
+        - **Free Apple ID:** Apps expire after 7 days
+        - **Paid Apple Developer:** Apps expire after 1 year
+        - You can re-install expired apps anytime
+        
+        ### Troubleshooting
+        - If installation fails, ensure your device trusts your computer
+        - Try different USB cables if connection issues occur
+        - Make sure iOS version is compatible (iOS 13.0+)
+        
+        ## 🔧 Technical Details
+        - **Framework:** SharedLogic framework properly embedded
+        - **Architecture:** ARM64 (iOS devices)
+        - **Minimum iOS:** 13.0
+        - **Kotlin Multiplatform:** ✅ Included
         
         ---
         
-        Generated from Kotlin Multiplatform project via GitHub Actions ⚡
+        Generated by GitHub Actions for Kotlin Multiplatform iOS builds 🚀
         EOF
 
-    - name: 📤 Upload Release Notes
-      if: steps.create_ipa.outputs.ipa_created == 'true'
+    - name: 📋 Upload Installation Guide
+      if: steps.create-ipa.outputs.success == 'true'
       uses: actions/upload-artifact@v4
       with:
-        name: 📋 Release-Notes-${{ env.BUILD_NUM }}
-        path: RELEASE_NOTES.md
+        name: 📋-Installation-Guide-${{ env.BUILD_NUM }}
+        path: iosApp/INSTALLATION_GUIDE.md
         retention-days: 30
