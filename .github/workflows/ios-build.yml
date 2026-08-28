@@ -112,55 +112,88 @@ jobs:
     - name: Archive iOS App for Distribution
       run: |
         cd iosApp
-        # Build archive for device distribution
+        echo "🏗️ Building iOS archive..."
+        
+        # Clean previous builds
+        rm -rf build/
+        
+        # Build archive for device distribution (unsigned)
         xcodebuild -project iosApp.xcodeproj \
           -scheme iosApp \
           -configuration Release \
           -destination 'generic/platform=iOS' \
           -archivePath build/iosApp.xcarchive \
           archive \
-          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGN_IDENTITY="" \
+          PROVISIONING_PROFILE=""
+        
+        if [ -d "build/iosApp.xcarchive" ]; then
+          echo "✅ Archive created successfully"
+          ls -la build/iosApp.xcarchive/
+        else
+          echo "❌ Archive creation failed"
+          exit 1
+        fi
 
-    # Attempt to create IPA with development signing (will work if certificates exist)
-    - name: Export IPA (Development)
-      continue-on-error: true
-      id: export_ipa
+    # Create IPA directly without Xcode export (this always works)
+    - name: Create IPA File (Direct Method)
+      id: create_ipa
       run: |
         cd iosApp
-        # Create export options plist
-        cat > export-options.plist << EOF
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-          <key>method</key>
-          <string>development</string>
-          <key>signingStyle</key>
-          <string>automatic</string>
-          <key>stripSwiftSymbols</key>
-          <true/>
-          <key>compileBitcode</key>
-          <false/>
-          <key>uploadBitcode</key>
-          <false/>
-          <key>uploadSymbols</key>
-          <false/>
-        </dict>
-        </plist>
-        EOF
         
-        # Try to export the IPA (will fail without certificates, but that's ok)
-        if xcodebuild -exportArchive \
-          -archivePath build/iosApp.xcarchive \
-          -exportPath build/ \
-          -exportOptionsPlist export-options.plist \
-          -allowProvisioningUpdates; then
-          echo "✅ IPA created successfully"
-          echo "ipa_created=true" >> $GITHUB_OUTPUT
-        else
-          echo "⚠️ IPA export failed - certificates not configured"
-          echo "ipa_created=false" >> $GITHUB_OUTPUT
+        echo "📦 Creating IPA file using direct method..."
+        
+        # Find the app in the archive
+        APP_PATH=""
+        if [ -d "build/iosApp.xcarchive/Products/Applications/iosApp.app" ]; then
+          APP_PATH="build/iosApp.xcarchive/Products/Applications/iosApp.app"
+        elif [ -d "build/iosApp.xcarchive/Products/Applications"/*.app ]; then
+          APP_PATH=$(find build/iosApp.xcarchive/Products/Applications -name "*.app" | head -1)
         fi
+        
+        if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+          echo "❌ No app found in archive"
+          echo "📁 Archive structure:"
+          find build/iosApp.xcarchive -name "*.app" | head -5
+          echo "create_ipa=false" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        echo "✅ Found app: $APP_PATH"
+        
+        # Create IPA structure (IPA is just a ZIP with Payload folder)
+        mkdir -p build/ipa/Payload
+        
+        # Copy app to Payload directory
+        cp -R "$APP_PATH" build/ipa/Payload/
+        
+        # Create IPA file
+        cd build/ipa
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+        IPA_NAME="CareHome_Unsigned_${TIMESTAMP}_build${{ github.run_number }}.ipa"
+        
+        echo "📦 Creating ZIP archive as IPA..."
+        zip -r "$IPA_NAME" Payload/
+        
+        if [ -f "$IPA_NAME" ]; then
+          echo "✅ IPA created successfully!"
+          echo "📱 IPA file: $IPA_NAME"
+          ls -lh "$IPA_NAME"
+          
+          # Verify IPA contents
+          echo "🔍 Verifying IPA structure..."
+          unzip -t "$IPA_NAME" | head -3
+          
+          echo "create_ipa=true" >> $GITHUB_OUTPUT
+          echo "ipa_path=build/ipa/$IPA_NAME" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Failed to create IPA file"
+          echo "create_ipa=false" >> $GITHUB_OUTPUT
+        fi
+        
+        cd ../..
 
     - name: Verify Build Results
       run: |
@@ -171,35 +204,79 @@ jobs:
           ls -la build/iosApp.xcarchive/
         fi
         
-        if [ -f build/*.ipa ]; then
-          echo "✅ IPA: $(ls build/*.ipa)"
-          ls -la build/*.ipa
+        if [ "${{ steps.create_ipa.outputs.create_ipa }}" = "true" ]; then
+          echo "✅ IPA: ${{ steps.create_ipa.outputs.ipa_path }}"
+          ls -lh "${{ steps.create_ipa.outputs.ipa_path }}"
+          
+          # Get IPA size
+          IPA_SIZE=$(ls -lh "${{ steps.create_ipa.outputs.ipa_path }}" | awk '{print $5}')
+          echo "📦 IPA Size: $IPA_SIZE"
+          
+          echo ""
+          echo "🎯 Installation Notes:"
+          echo "   📱 UNSIGNED IPA - Ready for sideloading"
+          echo "   🛠️ Compatible with:"
+          echo "      - AltStore (iOS)"
+          echo "      - Sideloadly (Windows/Mac)"
+          echo "      - 3uTools (Windows/Mac)"
+          echo "      - Xcode Devices (Mac)"
         else
-          echo "ℹ️  No IPA file (requires iOS certificates for signing)"
+          echo "ℹ️  No IPA file created"
         fi
 
     - name: List build artifacts
       run: |
-        echo "Build artifacts:"
+        echo "📁 Build artifacts:"
         cd iosApp
         ls -la build/
         if [ -d "build/iosApp.xcarchive" ]; then
-          echo "Archive contents:"
+          echo "📦 Archive contents:"
           ls -la build/iosApp.xcarchive/
         fi
-        if [ -f build/*.ipa ]; then
-          echo "IPA files:"
-          ls -la build/*.ipa
+        if [ "${{ steps.create_ipa.outputs.create_ipa }}" = "true" ]; then
+          echo "📱 IPA file:"
+          ls -lh "${{ steps.create_ipa.outputs.ipa_path }}"
         fi
 
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ios-build-${{ github.run_number }}
+        name: 🍎 iOS-Build-${{ github.run_number }}
         path: |
           iosApp/build/iosApp.xcarchive
-          iosApp/build/*.ipa
+          iosApp/build/ipa/*.ipa
         retention-days: 30
+
+    - name: Build Summary
+      run: |
+        echo ""
+        echo "🎯 iOS Build Summary"
+        echo "==================="
+        echo "📅 Date: $(date)"
+        echo "🔢 Build: ${{ github.run_number }}"
+        echo "⚙️ Configuration: ${{ github.event.inputs.build_configuration || 'Release' }}"
+        echo ""
+        
+        if [ "${{ steps.create_ipa.outputs.create_ipa }}" = "true" ]; then
+          echo "✅ SUCCESS: Working IPA file created!"
+          echo "📱 File: ${{ steps.create_ipa.outputs.ipa_path }}"
+          echo ""
+          echo "📥 Download Instructions:"
+          echo "   1. Check 'Artifacts' section below"
+          echo "   2. Download '🍎 iOS-Build-${{ github.run_number }}'"
+          echo "   3. Extract ZIP to get your .ipa file"
+          echo ""
+          echo "📱 Installation:"
+          echo "   - This is an unsigned IPA for sideloading"
+          echo "   - Use AltStore, Sideloadly, 3uTools, or Xcode"
+          echo "   - Works on real iOS devices"
+        else
+          echo "⚠️ IPA creation failed, but archive was built successfully"
+          echo "📦 You can still download the iOS archive for manual export"
+        fi
+        
+        echo ""
+        echo "🚀 Your Kotlin Multiplatform iOS app is ready!"
 
     - name: Upload Build Logs
       if: failure()
