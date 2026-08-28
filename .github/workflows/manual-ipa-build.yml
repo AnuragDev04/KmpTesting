@@ -178,162 +178,79 @@ jobs:
           fi
         fi
 
-    - name: 📦 Export IPA - Automatic Signing
+    - name: 📦 Export IPA - Direct Method (No Xcode Export)
       id: export_ipa
       run: |
         cd iosApp
         
-        echo "📦 Attempting IPA export..."
+        echo "📦 Creating IPA using direct method..."
         
-        # Check if we have a device archive or simulator archive
+        # Check if we have an archive
         if [ ! -d "build/CareHome.xcarchive" ]; then
-          echo "❌ No archive found to export"
+          echo "❌ No archive found"
           echo "ipa_success=false" >> $GITHUB_OUTPUT
           exit 0
         fi
         
-        # Check what type of archive we have
-        ARCHIVE_INFO=$(plutil -p build/CareHome.xcarchive/Info.plist | grep -A 1 "\"ApplicationProperties\"" -A 10 | grep "\"CFBundleIdentifier\"" || echo "")
+        echo "✅ Archive found, extracting app..."
         
-        echo "📋 Archive info: $ARCHIVE_INFO"
-        
-        # Try different export methods based on what we have
-        EXPORT_SUCCESS=false
-        
-        # Method 1: Development export (most permissive)
-        echo "🔄 Trying development export..."
-        cat > ExportOptions.plist << EOF
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>method</key>
-            <string>development</string>
-            <key>signingStyle</key>
-            <string>automatic</string>
-            <key>stripSwiftSymbols</key>
-            <true/>
-            <key>compileBitcode</key>
-            <false/>
-            <key>uploadBitcode</key>
-            <false/>
-            <key>uploadSymbols</key>
-            <false/>
-            <key>manageAppVersionAndBuildNumber</key>
-            <false/>
-        </dict>
-        </plist>
-        EOF
-        
-        if xcodebuild -exportArchive \
-          -archivePath build/CareHome.xcarchive \
-          -exportPath build/ipa/ \
-          -exportOptionsPlist ExportOptions.plist \
-          -allowProvisioningUpdates 2>&1 | tee export.log; then
-          
-          IPA_FILE=$(find build/ipa -name "*.ipa" | head -1)
-          if [ -n "$IPA_FILE" ]; then
-            echo "✅ Development export successful!"
-            EXPORT_SUCCESS=true
-            EXPORT_METHOD="development"
-          fi
-        else
-          echo "❌ Development export failed"
-          cat export.log
+        # Find the app inside the archive
+        APP_PATH=""
+        if [ -d "build/CareHome.xcarchive/Products/Applications/iosApp.app" ]; then
+          APP_PATH="build/CareHome.xcarchive/Products/Applications/iosApp.app"
+        elif [ -d "build/CareHome.xcarchive/Products/Applications"/*.app ]; then
+          APP_PATH=$(find build/CareHome.xcarchive/Products/Applications -name "*.app" | head -1)
         fi
         
-        # Method 2: Ad-hoc export (if development failed)
-        if [ "$EXPORT_SUCCESS" = false ]; then
-          echo "🔄 Trying ad-hoc export..."
-          cat > ExportOptions-AdHoc.plist << EOF
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>method</key>
-            <string>ad-hoc</string>
-            <key>signingStyle</key>
-            <string>automatic</string>
-            <key>stripSwiftSymbols</key>
-            <true/>
-            <key>compileBitcode</key>
-            <false/>
-        </dict>
-        </plist>
-        EOF
-          
-          if xcodebuild -exportArchive \
-            -archivePath build/CareHome.xcarchive \
-            -exportPath build/ipa-adhoc/ \
-            -exportOptionsPlist ExportOptions-AdHoc.plist \
-            -allowProvisioningUpdates 2>&1 | tee export-adhoc.log; then
-            
-            IPA_FILE=$(find build/ipa-adhoc -name "*.ipa" | head -1)
-            if [ -n "$IPA_FILE" ]; then
-              echo "✅ Ad-hoc export successful!"
-              # Move to main ipa directory
-              mkdir -p build/ipa
-              mv "$IPA_FILE" build/ipa/
-              IPA_FILE="build/ipa/$(basename "$IPA_FILE")"
-              EXPORT_SUCCESS=true
-              EXPORT_METHOD="ad-hoc"
-            fi
-          else
-            echo "❌ Ad-hoc export failed"
-            cat export-adhoc.log
-          fi
+        if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+          echo "❌ No app found in archive"
+          echo "📁 Archive contents:"
+          find build/CareHome.xcarchive -name "*.app" | head -5
+          echo "ipa_success=false" >> $GITHUB_OUTPUT
+          exit 0
         fi
         
-        # Method 3: Try to create an unsigned IPA-like archive (last resort)
-        if [ "$EXPORT_SUCCESS" = false ]; then
-          echo "🔄 Creating unsigned archive bundle..."
-          
-          # Create a pseudo-IPA from the archive
-          mkdir -p build/ipa
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          
-          # Extract app from archive and create IPA-like structure
-          if [ -d "build/CareHome.xcarchive/Products/Applications" ]; then
-            cd build/ipa
-            mkdir -p Payload
-            cp -R ../CareHome.xcarchive/Products/Applications/* Payload/
-            
-            # Create IPA file (it's just a ZIP)
-            zip -r "CareHome_Unsigned_${TIMESTAMP}_build${{ github.run_number }}.ipa" Payload/
-            
-            if [ -f "CareHome_Unsigned_${TIMESTAMP}_build${{ github.run_number }}.ipa" ]; then
-              echo "✅ Unsigned archive bundle created!"
-              IPA_FILE="build/ipa/CareHome_Unsigned_${TIMESTAMP}_build${{ github.run_number }}.ipa"
-              EXPORT_SUCCESS=true
-              EXPORT_METHOD="unsigned"
-            fi
-            
-            cd ../..
-          fi
-        fi
+        echo "✅ Found app: $APP_PATH"
         
-        # Final result
-        if [ "$EXPORT_SUCCESS" = true ]; then
-          echo "✅ IPA creation successful using $EXPORT_METHOD method!"
+        # Create IPA manually (IPA is just a ZIP with Payload folder)
+        echo "📦 Creating IPA structure..."
+        mkdir -p build/ipa/Payload
+        
+        # Copy app to Payload folder
+        cp -R "$APP_PATH" build/ipa/Payload/
+        
+        # Create IPA file
+        cd build/ipa
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+        IPA_NAME="${{ github.event.inputs.app_name }}_Direct_${TIMESTAMP}_build${{ github.run_number }}.ipa"
+        
+        echo "📦 Creating ZIP archive as IPA..."
+        zip -r "$IPA_NAME" Payload/
+        
+        if [ -f "$IPA_NAME" ]; then
+          echo "✅ IPA created successfully!"
+          echo "📱 IPA file: $IPA_NAME"
+          ls -lh "$IPA_NAME"
           
-          # Rename with proper timestamp and method
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          NEW_NAME="build/ipa/CareHome_${EXPORT_METHOD}_${TIMESTAMP}_build${{ github.run_number }}.ipa"
-          
-          if [ "$EXPORT_METHOD" != "unsigned" ]; then
-            mv "$IPA_FILE" "$NEW_NAME"
-          fi
-          
-          echo "📱 IPA created: $NEW_NAME"
-          ls -lh "$NEW_NAME"
+          # Verify IPA contents
+          echo "🔍 Verifying IPA contents..."
+          unzip -t "$IPA_NAME" | head -5
           
           echo "ipa_success=true" >> $GITHUB_OUTPUT
-          echo "ipa_path=$NEW_NAME" >> $GITHUB_OUTPUT
-          echo "export_method=$EXPORT_METHOD" >> $GITHUB_OUTPUT
+          echo "ipa_path=build/ipa/$IPA_NAME" >> $GITHUB_OUTPUT
+          echo "export_method=direct" >> $GITHUB_OUTPUT
           
         else
-          echo "❌ All export methods failed"
+          echo "❌ Failed to create IPA file"
           echo "ipa_success=false" >> $GITHUB_OUTPUT
+        fi
+        
+        cd ../..
+        
+        # Additional verification
+        if [ "$ipa_success" = "true" ]; then
+          echo "📊 IPA file size: $(ls -lh "build/ipa/$IPA_NAME" | awk '{print $5}')"
+          echo "🎯 IPA type: Unsigned - suitable for sideloading"
         fi
 
     - name: 📋 Build Report
