@@ -172,7 +172,26 @@ jobs:
         rm -rf build/
         mkdir -p build
         
+        # First verify that the shared framework exists
+        echo "🔍 Checking for shared framework..."
+        if find ../sharedLogic -name "SharedLogic.xcframework" | head -1; then
+          FRAMEWORK_PATH=$(find ../sharedLogic -name "SharedLogic.xcframework" | head -1)
+          echo "✅ Found SharedLogic framework at: $FRAMEWORK_PATH"
+          
+          # Create a temporary framework directory for Xcode to find
+          mkdir -p build/Frameworks
+          ln -sf "$(realpath "$FRAMEWORK_PATH")" build/Frameworks/SharedLogic.xcframework
+          
+          echo "🔗 Framework linked for build"
+        else
+          echo "❌ SharedLogic framework not found!"
+          echo "🔍 Available framework files:"
+          find ../sharedLogic/build -name "*.framework" -o -name "*.xcframework" | head -10
+          exit 1
+        fi
+        
         # Build iOS app without code signing (works on GitHub Actions)
+        # Add framework search path to help Xcode find our framework
         xcodebuild \
           -project iosApp.xcodeproj \
           -scheme iosApp \
@@ -180,6 +199,7 @@ jobs:
           -sdk iphoneos \
           -destination 'generic/platform=iOS' \
           -derivedDataPath build/DerivedData \
+          FRAMEWORK_SEARCH_PATHS="$(pwd)/build/Frameworks $(pwd)/../sharedLogic/build/XCFrameworks/release $(pwd)/../sharedLogic/build/XCFrameworks/debug" \
           CODE_SIGNING_ALLOWED=NO \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGN_IDENTITY="" \
@@ -195,7 +215,34 @@ jobs:
           APP_PATH=$(find build/DerivedData/Build/Products/Release-iphoneos -name "*.app" | head -1)
           if [ -n "$APP_PATH" ]; then
             echo "📱 App location: $APP_PATH"
+            echo "📋 App bundle contents:"
             ls -la "$APP_PATH"
+            
+            # Ensure SharedLogic framework is embedded
+            if [ ! -d "$APP_PATH/Frameworks" ]; then
+              echo "⚠️ Creating Frameworks directory in app bundle"
+              mkdir -p "$APP_PATH/Frameworks"
+            fi
+            
+            # Copy SharedLogic framework if not already there
+            if [ ! -d "$APP_PATH/Frameworks/SharedLogic.framework" ]; then
+              echo "📦 Manually embedding SharedLogic framework..."
+              
+              if [ -d "$FRAMEWORK_PATH/ios-arm64/SharedLogic.framework" ]; then
+                cp -R "$FRAMEWORK_PATH/ios-arm64/SharedLogic.framework" "$APP_PATH/Frameworks/"
+                echo "✅ Embedded iOS arm64 framework"
+              elif [ -d "$FRAMEWORK_PATH/ios-arm64_x86_64-maccatalyst/SharedLogic.framework" ]; then
+                cp -R "$FRAMEWORK_PATH/ios-arm64_x86_64-maccatalyst/SharedLogic.framework" "$APP_PATH/Frameworks/"
+                echo "✅ Embedded Mac Catalyst framework"
+              else
+                echo "❌ Could not find suitable framework variant"
+                ls -la "$FRAMEWORK_PATH/"
+                exit 1
+              fi
+            fi
+            
+            echo "✅ Final app bundle with framework:"
+            ls -la "$APP_PATH/Frameworks/"
           else
             echo "❌ Built app not found"
             exit 1
@@ -222,10 +269,20 @@ jobs:
         
         if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
           echo "❌ No app found to package"
+          echo "🔍 Checking build products:"
+          find build/DerivedData -name "*.app" | head -10
           exit 1
         fi
         
         echo "📱 Found app: $APP_PATH"
+        
+        # Final verification of app bundle
+        echo "📋 Final app bundle contents:"
+        ls -la "$APP_PATH/"
+        if [ -d "$APP_PATH/Frameworks" ]; then
+          echo "📦 Embedded frameworks:"
+          ls -la "$APP_PATH/Frameworks/"
+        fi
         
         # Create IPA structure
         # IPA is just a ZIP file with a specific structure: Payload/AppName.app
@@ -253,10 +310,11 @@ jobs:
           echo "   File: $IPA_FILENAME"
           echo "   Size: $IPA_SIZE"
           echo "   Type: Unsigned (for sideloading)"
+          echo "   Includes: SharedLogic framework embedded"
           
           # Verify IPA structure
           echo "🔍 Verifying IPA structure..."
-          unzip -t "$IPA_FILENAME" | head -5
+          unzip -l "$IPA_FILENAME" | grep -E "(Payload|\.app|Frameworks|SharedLogic)" | head -10
           
           # Export info for artifacts
           echo "ipa_created=true" >> $GITHUB_OUTPUT
