@@ -88,34 +88,43 @@ jobs:
       run: |
         echo "🔨 Building Kotlin Multiplatform framework..."
         
-        # Build the iOS framework using Gradle
-        ./gradlew :sharedLogic:assembleXCFramework --stacktrace --no-daemon --warning-mode=all
-        
-        # Verify framework was created
-        echo "🔍 Looking for built framework..."
-        
-        if find sharedLogic/build -name "SharedLogic.xcframework" -type d | head -1; then
-          FRAMEWORK_PATH=$(find sharedLogic/build -name "SharedLogic.xcframework" -type d | head -1)
-          echo "✅ Found XCFramework: $FRAMEWORK_PATH"
+        # Try building regular iOS framework first (more reliable)
+        echo "🔄 Attempting iOS framework build..."
+        if ./gradlew :sharedLogic:linkReleaseFrameworkIosArm64 --stacktrace --no-daemon --warning-mode=all; then
+          echo "✅ iOS framework build successful"
           
-          # Show framework structure
-          echo "📂 Framework structure:"
-          ls -la "$FRAMEWORK_PATH"
-          
-          # Export framework path for later use
-          echo "FRAMEWORK_PATH=$FRAMEWORK_PATH" >> $GITHUB_ENV
-          
-        elif find sharedLogic/build -name "SharedLogic.framework" -type d | head -1; then
-          FRAMEWORK_PATH=$(find sharedLogic/build -name "SharedLogic.framework" -type d | head -1)
-          echo "✅ Found regular Framework: $FRAMEWORK_PATH"
-          echo "FRAMEWORK_PATH=$FRAMEWORK_PATH" >> $GITHUB_ENV
+          # Find the built framework
+          if find sharedLogic/build -name "SharedLogic.framework" -type d | head -1; then
+            FRAMEWORK_PATH=$(find sharedLogic/build -name "SharedLogic.framework" -type d | head -1)
+            echo "✅ Found iOS Framework: $FRAMEWORK_PATH"
+            echo "FRAMEWORK_PATH=$FRAMEWORK_PATH" >> $GITHUB_ENV
+          else
+            echo "❌ iOS framework not found after successful build"
+            exit 1
+          fi
           
         else
-          echo "❌ No SharedLogic framework found!"
-          echo "🔍 Available build outputs:"
-          find sharedLogic/build -name "*.framework" -o -name "*.xcframework" | head -10
-          exit 1
+          echo "⚠️ iOS framework build failed, trying XCFramework..."
+          
+          # Fallback to XCFramework build
+          ./gradlew :sharedLogic:assembleXCFramework --stacktrace --no-daemon --warning-mode=all
+          
+          # Verify XCFramework was created
+          if find sharedLogic/build -name "SharedLogic.xcframework" -type d | head -1; then
+            FRAMEWORK_PATH=$(find sharedLogic/build -name "SharedLogic.xcframework" -type d | head -1)
+            echo "✅ Found XCFramework: $FRAMEWORK_PATH"
+            echo "FRAMEWORK_PATH=$FRAMEWORK_PATH" >> $GITHUB_ENV
+          else
+            echo "❌ No framework found!"
+            echo "🔍 Available build outputs:"
+            find sharedLogic/build -name "*.framework" -o -name "*.xcframework" | head -10
+            exit 1
+          fi
         fi
+        
+        # Show framework structure
+        echo "📂 Framework structure:"
+        ls -la "$FRAMEWORK_PATH"
 
     # ================================================
     # CONFIGURE iOS PROJECT
@@ -209,6 +218,16 @@ jobs:
         echo "🔨 Running xcodebuild..."
         set -o pipefail
         
+        # Set up framework search paths based on what we built
+        FRAMEWORK_SEARCH_PATHS=""
+        if [[ "$SHARED_FRAMEWORK_PATH" == *".xcframework"* ]]; then
+          FRAMEWORK_SEARCH_PATHS="../sharedLogic/build/XCFrameworks/release ../sharedLogic/build/XCFrameworks/debug"
+        else
+          FRAMEWORK_SEARCH_PATHS="../sharedLogic/build/bin/iosArm64/releaseFramework ../sharedLogic/build/bin/iosArm64/debugFramework"
+        fi
+        
+        echo "📍 Framework search paths: $FRAMEWORK_SEARCH_PATHS"
+        
         xcodebuild clean build \
           -project iosApp.xcodeproj \
           -scheme iosApp \
@@ -217,7 +236,7 @@ jobs:
           -destination 'generic/platform=iOS' \
           -derivedDataPath build/DerivedData \
           -allowProvisioningUpdates \
-          FRAMEWORK_SEARCH_PATHS="../sharedLogic/build/XCFrameworks/release ../sharedLogic/build/bin/iosArm64/releaseFramework" \
+          FRAMEWORK_SEARCH_PATHS="$FRAMEWORK_SEARCH_PATHS" \
           CODE_SIGNING_ALLOWED=NO \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGN_IDENTITY="" \
@@ -298,11 +317,16 @@ jobs:
           echo "📋 Copying framework: $IOS_FRAMEWORK"
           cp -R "$IOS_FRAMEWORK" "$APP_PATH/Frameworks/"
           
-        else
+        elif [[ "$FRAMEWORK_SOURCE" == *".framework"* ]]; then
           echo "📦 Handling regular .framework..."
           
           # For regular framework, copy directly
+          echo "📋 Copying framework: $FRAMEWORK_SOURCE"
           cp -R "$FRAMEWORK_SOURCE" "$APP_PATH/Frameworks/"
+          
+        else
+          echo "❌ Unknown framework type: $FRAMEWORK_SOURCE"
+          exit 1
         fi
         
         # Verify framework was embedded

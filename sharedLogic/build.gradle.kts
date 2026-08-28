@@ -17,18 +17,15 @@ kotlin {
     androidResources { enable = true }
   }
 
-  // iOS targets with XCFramework configuration
-  iosX64()
-  iosArm64()
-  iosSimulatorArm64()
-
   // Configure XCFramework
   val xcf = XCFramework()
-  listOf(
-    iosX64(),
-    iosArm64(), 
-    iosSimulatorArm64()
-  ).forEach { target ->
+  
+  // iOS targets with XCFramework configuration
+  val iosX64 = iosX64()
+  val iosArm64 = iosArm64()
+  val iosSimulatorArm64 = iosSimulatorArm64()
+
+  listOf(iosX64, iosArm64, iosSimulatorArm64).forEach { target ->
     target.binaries.framework {
       baseName = "SharedLogic"
       isStatic = true
