@@ -1,0 +1,394 @@
+name: 📱 Generate iOS IPA
+
+# This workflow creates iOS IPA files from your Kotlin Multiplatform project
+# Designed for Windows developers who want to test their KMP app on iOS devices
+# No macOS or Apple Developer account required!
+
+on:
+  # Manual trigger - click "Run workflow" to generate IPA
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: 'App Name (displayed on iOS)'
+        required: true
+        default: 'CareHome'
+      bundle_id:
+        description: 'Bundle ID (com.yourname.appname)'
+        required: true
+        default: 'com.example.carehome'
+      version:
+        description: 'App Version'
+        required: true
+        default: '1.0.0'
+
+  # Auto trigger on code changes
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'sharedLogic/**'
+      - 'iosApp/**'
+      - 'androidApp/**'
+
+jobs:
+  build-ios-ipa:
+    name: 🍎 Build iOS IPA
+    runs-on: macos-latest
+    timeout-minutes: 45
+    
+    steps:
+    # ================================
+    # SETUP PHASE
+    # ================================
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: ☕ Setup Java 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+
+    - name: 🔧 Setup Environment
+      run: |
+        echo "🏗️ Setting up build environment..."
+        chmod +x ./gradlew
+        
+        # Display environment info
+        echo "📋 Build Environment:"
+        echo "   Xcode: $(xcodebuild -version | head -1)"
+        echo "   Java: $(java -version 2>&1 | head -1)"
+        echo "   Gradle: $(./gradlew --version | grep 'Gradle' | head -1)"
+        
+        # Set app configuration
+        APP_NAME="${{ github.event.inputs.app_name || 'CareHome' }}"
+        BUNDLE_ID="${{ github.event.inputs.bundle_id || 'com.example.carehome' }}"
+        VERSION="${{ github.event.inputs.version || '1.0.0' }}"
+        BUILD_NUM="${{ github.run_number }}"
+        
+        echo "📱 App Configuration:"
+        echo "   Name: $APP_NAME"
+        echo "   Bundle ID: $BUNDLE_ID"
+        echo "   Version: $VERSION"
+        echo "   Build: $BUILD_NUM"
+        
+        # Export for later steps
+        echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+        echo "BUNDLE_ID=$BUNDLE_ID" >> $GITHUB_ENV
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "BUILD_NUM=$BUILD_NUM" >> $GITHUB_ENV
+
+    # ================================
+    # BUILD KOTLIN MULTIPLATFORM
+    # ================================
+    - name: 🏗️ Build Shared Framework
+      run: |
+        echo "🔨 Building Kotlin Multiplatform shared framework..."
+        
+        # Build the XCFramework for iOS
+        ./gradlew :sharedLogic:assembleXCFramework --no-daemon --stacktrace
+        
+        # Verify framework was created
+        if [ -d "sharedLogic/build/XCFrameworks" ] || find sharedLogic -name "*.xcframework" | grep -q .; then
+          echo "✅ Shared framework built successfully"
+          find sharedLogic -name "*.xcframework" | head -3
+        else
+          echo "❌ Shared framework build failed"
+          exit 1
+        fi
+
+    # ================================
+    # CONFIGURE iOS PROJECT
+    # ================================
+    - name: 📱 Configure iOS App
+      run: |
+        cd iosApp
+        
+        echo "⚙️ Configuring iOS project..."
+        
+        # Create proper Info.plist with user configuration
+        cat > iosApp/Info.plist << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleDisplayName</key>
+            <string>${{ env.APP_NAME }}</string>
+            <key>CFBundleExecutable</key>
+            <string>iosApp</string>
+            <key>CFBundleIdentifier</key>
+            <string>${{ env.BUNDLE_ID }}</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>${{ env.APP_NAME }}</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${{ env.VERSION }}</string>
+            <key>CFBundleVersion</key>
+            <string>${{ env.BUILD_NUM }}</string>
+            <key>LSRequiresIPhoneOS</key>
+            <true/>
+            <key>UILaunchStoryboardName</key>
+            <string>LaunchScreen</string>
+            <key>UIRequiredDeviceCapabilities</key>
+            <array>
+                <string>armv7</string>
+            </array>
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+                <string>UIInterfaceOrientationPortrait</string>
+                <string>UIInterfaceOrientationLandscapeLeft</string>
+                <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+            <key>UISupportedInterfaceOrientations~ipad</key>
+            <array>
+                <string>UIInterfaceOrientationPortrait</string>
+                <string>UIInterfaceOrientationPortraitUpsideDown</string>
+                <string>UIInterfaceOrientationLandscapeLeft</string>
+                <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+            <key>CADisableMinimumFrameDurationOnPhone</key>
+            <true/>
+        </dict>
+        </plist>
+        EOF
+        
+        echo "✅ iOS project configured successfully"
+
+    # ================================
+    # BUILD iOS APP (UNSIGNED)
+    # ================================
+    - name: 🔨 Build iOS App
+      run: |
+        cd iosApp
+        
+        echo "🔨 Building iOS app for devices..."
+        
+        # Clean any previous builds
+        rm -rf build/
+        mkdir -p build
+        
+        # Build iOS app without code signing (works on GitHub Actions)
+        xcodebuild \
+          -project iosApp.xcodeproj \
+          -scheme iosApp \
+          -configuration Release \
+          -sdk iphoneos \
+          -destination 'generic/platform=iOS' \
+          -derivedDataPath build/DerivedData \
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGN_IDENTITY="" \
+          PROVISIONING_PROFILE="" \
+          DEVELOPMENT_TEAM="" \
+          build 2>&1 | tee build.log
+        
+        # Check if build succeeded
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+          echo "✅ iOS app built successfully"
+          
+          # Find the built app
+          APP_PATH=$(find build/DerivedData/Build/Products/Release-iphoneos -name "*.app" | head -1)
+          if [ -n "$APP_PATH" ]; then
+            echo "📱 App location: $APP_PATH"
+            ls -la "$APP_PATH"
+          else
+            echo "❌ Built app not found"
+            exit 1
+          fi
+        else
+          echo "❌ iOS build failed"
+          echo "📋 Build log:"
+          tail -50 build.log
+          exit 1
+        fi
+
+    # ================================
+    # CREATE IPA FILE
+    # ================================
+    - name: 📦 Create IPA File
+      id: create_ipa
+      run: |
+        cd iosApp
+        
+        echo "📦 Creating IPA file..."
+        
+        # Find the built app
+        APP_PATH=$(find build/DerivedData/Build/Products/Release-iphoneos -name "*.app" | head -1)
+        
+        if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+          echo "❌ No app found to package"
+          exit 1
+        fi
+        
+        echo "📱 Found app: $APP_PATH"
+        
+        # Create IPA structure
+        # IPA is just a ZIP file with a specific structure: Payload/AppName.app
+        mkdir -p ipa/Payload
+        
+        # Copy app to Payload directory  
+        cp -R "$APP_PATH" ipa/Payload/
+        
+        # Create IPA filename with timestamp
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+        IPA_FILENAME="${{ env.APP_NAME }}_v${{ env.VERSION }}_${TIMESTAMP}.ipa"
+        
+        echo "📦 Creating IPA: $IPA_FILENAME"
+        
+        # Create the IPA file (just ZIP the Payload folder)
+        cd ipa
+        zip -r "../$IPA_FILENAME" Payload/
+        cd ..
+        
+        # Verify IPA was created
+        if [ -f "$IPA_FILENAME" ]; then
+          IPA_SIZE=$(ls -lh "$IPA_FILENAME" | awk '{print $5}')
+          echo "✅ IPA created successfully!"
+          echo "📊 IPA Details:"
+          echo "   File: $IPA_FILENAME"
+          echo "   Size: $IPA_SIZE"
+          echo "   Type: Unsigned (for sideloading)"
+          
+          # Verify IPA structure
+          echo "🔍 Verifying IPA structure..."
+          unzip -t "$IPA_FILENAME" | head -5
+          
+          # Export info for artifacts
+          echo "ipa_created=true" >> $GITHUB_OUTPUT
+          echo "ipa_filename=$IPA_FILENAME" >> $GITHUB_OUTPUT
+          echo "ipa_size=$IPA_SIZE" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Failed to create IPA"
+          echo "ipa_created=false" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+    # ================================
+    # UPLOAD RESULTS
+    # ================================
+    - name: 📤 Upload IPA File
+      if: steps.create_ipa.outputs.ipa_created == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: 📱 ${{ env.APP_NAME }}-iOS-v${{ env.VERSION }}-build${{ env.BUILD_NUM }}
+        path: iosApp/${{ steps.create_ipa.outputs.ipa_filename }}
+        retention-days: 30
+
+    - name: 📋 Upload Build Logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: 🛠️ Build-Logs-${{ env.BUILD_NUM }}
+        path: |
+          iosApp/build.log
+          iosApp/build/
+        retention-days: 7
+
+    # ================================
+    # SUCCESS SUMMARY
+    # ================================
+    - name: 🎉 Build Summary
+      if: steps.create_ipa.outputs.ipa_created == 'true'
+      run: |
+        echo ""
+        echo "🎉 SUCCESS! Your iOS IPA has been created!"
+        echo "========================================"
+        echo ""
+        echo "📱 App Details:"
+        echo "   Name: ${{ env.APP_NAME }}"
+        echo "   Bundle ID: ${{ env.BUNDLE_ID }}"
+        echo "   Version: ${{ env.VERSION }}"
+        echo "   Build: ${{ env.BUILD_NUM }}"
+        echo "   File: ${{ steps.create_ipa.outputs.ipa_filename }}"
+        echo "   Size: ${{ steps.create_ipa.outputs.ipa_size }}"
+        echo ""
+        echo "📥 How to Download:"
+        echo "   1. Scroll down to 'Artifacts' section"
+        echo "   2. Download '📱 ${{ env.APP_NAME }}-iOS-v${{ env.VERSION }}-build${{ env.BUILD_NUM }}'"
+        echo "   3. Extract the ZIP file to get your .ipa"
+        echo ""
+        echo "📲 How to Install on iPhone:"
+        echo ""
+        echo "   Option 1 - AltStore (iOS):"
+        echo "   • Install AltStore on your iPhone"
+        echo "   • Use AltStore to sideload the IPA"
+        echo ""
+        echo "   Option 2 - Sideloadly (Windows/Mac):"
+        echo "   • Download Sideloadly from sideloadly.io"
+        echo "   • Connect iPhone and sideload the IPA"
+        echo ""
+        echo "   Option 3 - 3uTools (Windows):"
+        echo "   • Download 3uTools"
+        echo "   • Use 'Install App' feature"
+        echo ""
+        echo "   Option 4 - Xcode (Mac only):"
+        echo "   • Window → Devices and Simulators"
+        echo "   • Select your device → '+' → Choose IPA"
+        echo ""
+        echo "⚠️  Note: This is an UNSIGNED IPA"
+        echo "   • No Apple Developer account required to create"
+        echo "   • Requires sideloading to install on devices"
+        echo "   • For App Store distribution, you need Apple Developer account"
+        echo ""
+        echo "🚀 Your Kotlin Multiplatform app is ready for iOS!"
+
+    - name: 📝 Create Release Notes
+      if: steps.create_ipa.outputs.ipa_created == 'true'
+      run: |
+        cat > RELEASE_NOTES.md << EOF
+        # 📱 iOS IPA Release
+        
+        ## App Information
+        - **Name:** ${{ env.APP_NAME }}
+        - **Bundle ID:** ${{ env.BUNDLE_ID }}
+        - **Version:** ${{ env.VERSION }}
+        - **Build:** ${{ env.BUILD_NUM }}
+        - **Date:** $(date)
+        
+        ## Installation Instructions
+        
+        This is an **unsigned IPA** that can be installed via sideloading:
+        
+        ### For Windows Users:
+        1. **Sideloadly** (Recommended)
+           - Download from sideloadly.io
+           - Connect iPhone via USB
+           - Login with Apple ID and sideload IPA
+        
+        2. **3uTools**
+           - Download 3uTools
+           - Use "Install App" feature
+        
+        ### For Mac Users:
+        - **Xcode:** Window → Devices and Simulators → Install App
+        
+        ### For iOS Users:
+        - **AltStore:** Install AltStore app and sideload
+        
+        ## Requirements
+        - iOS 13.0 or later
+        - iPhone/iPad device
+        - Sideloading tool (see above)
+        
+        ## What's Included
+        - Full Kotlin Multiplatform functionality
+        - Native iOS UI with shared business logic
+        - Ready for testing and development
+        
+        ---
+        
+        Generated from Kotlin Multiplatform project via GitHub Actions ⚡
+        EOF
+
+    - name: 📤 Upload Release Notes
+      if: steps.create_ipa.outputs.ipa_created == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: 📋 Release-Notes-${{ env.BUILD_NUM }}
+        path: RELEASE_NOTES.md
+        retention-days: 30
