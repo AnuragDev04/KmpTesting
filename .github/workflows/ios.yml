@@ -1,0 +1,163 @@
+name: Build iOS Appp
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      build_configuration:
+        description: 'Build Configuration'
+        required: true
+        default: 'Release'
+        type: choice
+        options:
+          - Debug
+          - Release
+
+env:
+  XCODE_VERSION: 'latest-stable'
+  IOS_DEPLOYMENT_TARGET: '13.0'
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Select Xcode Version
+      run: |
+        # List available Xcode versions
+        sudo xcode-select -p
+        ls /Applications/ | grep -i xcode || true
+        # Use default Xcode installation
+        echo "Using default Xcode version:"
+        xcodebuild -version
+    - name: Setup Java 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Make Gradle Wrapper Executable
+      run: chmod +x ./gradlew
+
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v2
+      with:
+        gradle-version: wrapper
+
+    - name: Cache Kotlin/Native prebuilt
+      uses: actions/cache@v4
+      with:
+        path: ~/.konan
+        key: ${{ runner.os }}-konan-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-konan-
+    - name: Cache Gradle dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+    - name: Build KMP Shared Framework
+      run: |
+        echo "Building shared framework..."
+        echo "Java version:"
+        java -version
+        echo "Gradle version:"
+        ./gradlew --version
+        echo "Starting XCFramework build..."
+        ./gradlew :sharedLogic:assembleXCFramework --no-daemon --stacktrace --info
+        echo "Checking generated frameworks..."
+        find . -name "*.xcframework" -type d
+        
+    - name: List iOS workspace structure
+      run: |
+        echo "iOS App structure:"
+        ls -la iosApp/
+        ls -la iosApp/iosApp.xcodeproj/
+        
+    - name: Build iOS App (Debug)
+      if: ${{ github.event.inputs.build_configuration == 'Debug' || github.event.inputs.build_configuration == '' }}
+      run: |
+        cd iosApp
+        xcodebuild -project iosApp.xcodeproj \
+          -scheme iosApp \
+          -configuration Debug \
+          -destination 'generic/platform=iOS' \
+          -archivePath build/iosApp.xcarchive \
+          archive \
+          CODE_SIGNING_ALLOWED=NO \
+          DEVELOPMENT_TEAM="" \
+          CODE_SIGN_IDENTITY=""
+    - name: Build iOS App (Release)
+      if: ${{ github.event.inputs.build_configuration == 'Release' }}
+      run: |
+        cd iosApp
+        xcodebuild -project iosApp.xcodeproj \
+          -scheme iosApp \
+          -configuration Release \
+          -destination 'generic/platform=iOS' \
+          -archivePath build/iosApp.xcarchive \
+          archive \
+          CODE_SIGNING_ALLOWED=NO \
+          DEVELOPMENT_TEAM="" \
+          CODE_SIGN_IDENTITY=""
+    # For unsigned build (development/testing purposes)
+    - name: Export IPA (Unsigned)
+      run: |
+        cd iosApp
+        # Create export options plist for unsigned build
+        cat > export-options.plist << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>method</key>
+          <string>development</string>
+          <key>signingStyle</key>
+          <string>manual</string>
+          <key>stripSwiftSymbols</key>
+          <true/>
+        </dict>
+        </plist>
+        EOF
+        
+        # Export the IPA
+        xcodebuild -exportArchive \
+          -archivePath build/iosApp.xcarchive \
+          -exportPath build/ \
+          -exportOptionsPlist export-options.plist \
+          -allowProvisioningUpdates
+    - name: List build artifacts
+      run: |
+        echo "Build artifacts:"
+        ls -la iosApp/build/
+        if [ -f iosApp/build/*.ipa ]; then
+          echo "IPA file found:"
+          ls -la iosApp/build/*.ipa
+        fi
+    - name: Upload IPA Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ios-app-${{ github.run_number }}
+        path: |
+          iosApp/build/*.ipa
+          iosApp/build/iosApp.xcarchive
+        retention-days: 30
+
+    - name: Upload Build Logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs-${{ github.run_number }}
+        path: |
+          iosApp/build/
+        retention-days: 7
