@@ -1,85 +1,52 @@
-name: Build iOS IPA
+name: Build KMP iOS (Simulator)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ main ]
-  workflow_dispatch:   # allows manual triggering
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
-  build-ios:
-    runs-on: macos-latest   # macOS runner with Xcode
+  build-ios-simulator:
+    runs-on: macos-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      # ---- Build the Kotlin Multiplatform framework ----
-      - name: Build shared Kotlin framework
+      - name: Build KMP XCFramework (Fix permissions)
         run: |
-          ./gradlew :shared:assembleXCFramework   # adjust module name if needed
-        env:
-          # If your build requires any environment variables, set them here
-          ORG_GRADLE_PROJECT_iosSigning: true
+          chmod +x gradlew
+          ./gradlew :shared:assembleXCFramework
+        # If your module isn't called "shared", change it here
 
-      # ---- Set up code signing ----
-      - name: Import certificate and provisioning profile
-        env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      - name: Build for iPhone Simulator (No signing)
+        working-directory: iosApp  # Change if your iOS folder has a different name
         run: |
-          # Create a temporary keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security set-keychain-settings -lut 3600 build.keychain
-
-          # Import the certificate (p12) into the keychain
-          echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > certificate.p12
-          security import certificate.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-
-          # Install the provisioning profile
-          echo "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode > profile.mobileprovision
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/$(uuidgen).mobileprovision
-
-      # ---- Build and archive the iOS app ----
-      - name: Build and archive (xcodebuild)
-        working-directory: iosApp   # adjust to your iOS project folder
-        run: |
-          xcodebuild clean archive \
+          xcodebuild build \
             -workspace iosApp.xcworkspace \
             -scheme iosApp \
-            -configuration Release \
-            -archivePath $RUNNER_TEMP/iosApp.xcarchive \
-            CODE_SIGN_STYLE=Manual \
-            PROVISIONING_PROFILE_SPECIFIER="<Your Provisioning Profile Name>" \
-            DEVELOPMENT_TEAM="<Your Team ID>" \
-            PRODUCT_BUNDLE_IDENTIFIER="<Your Bundle ID>"
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
 
-      # ---- Export IPA ----
-      - name: Export IPA
-        working-directory: iosApp
+      - name: Zip Simulator App
         run: |
-          xcodebuild -exportArchive \
-            -archivePath $RUNNER_TEMP/iosApp.xcarchive \
-            -exportPath $RUNNER_TEMP \
-            -exportOptionsPlist ExportOptions.plist \
-            -allowProvisioningUpdates
+          cd iosApp/build/Build/Products/Debug-iphonesimulator
+          zip -r ../../../../../ios-simulator-app.zip iosApp.app
 
-      # ---- Upload IPA as artifact ----
-      - name: Upload IPA
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-app-ipa
-          path: ${{ runner.temp }}/*.ipa
+          name: ios-simulator-build
+          path: ios-simulator-app.zip
