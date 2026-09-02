@@ -23,15 +23,59 @@ jobs:
           ./gradlew :shared:assembleXCFramework
 
       # ============================================================
-      # FIXED: Build the iOS app by going INSIDE the iosApp folder
+      # FIX: Check if iosApp is a real folder or a stub file
+      # ============================================================
+      - name: Fix missing iosApp folder
+        run: |
+          echo "📂 Checking current iosApp type..."
+          ls -ld iosApp
+          
+          # If it's a file (and not a directory), we need to recover it
+          if [ -f "iosApp" ]; then
+            echo "⚠️  iosApp is a regular file (stub). Searching for actual project..."
+            
+            # Check if the big zip file contains the Xcode project
+            if unzip -l zipfile.zip | grep -q "\.xcodeproj"; then
+              echo "✅ Found Xcode project inside zipfile.zip! Extracting..."
+              unzip -q zipfile.zip -d ./extracted_ios
+              # Find the actual iosApp folder inside the zip
+              EXTRACTED_DIR=$(find ./extracted_ios -name "iosApp.xcodeproj" -o -name "iosApp.xcworkspace" | head -1 | xargs dirname)
+              if [ -n "$EXTRACTED_DIR" ]; then
+                echo "📁 Moving extracted iosApp to root..."
+                rm -f iosApp  # Remove the stub file
+                mv "$EXTRACTED_DIR" ./iosApp
+              fi
+            else
+              echo "❌ No Xcode project found in zipfile.zip either!"
+              echo "📝 Content of the iosApp stub file:"
+              cat iosApp
+              echo ""
+              echo "💡 SOLUTION:"
+              echo "  1. Commit the actual 'iosApp' folder from your local machine."
+              echo "  2. Or run './gradlew createXcodeProject' to generate it."
+              echo "  3. Then push the folder to GitHub."
+              exit 1
+            fi
+          fi
+          
+          # Final verification
+          if [ -d "iosApp" ]; then
+            echo "✅ Success! iosApp is now a valid directory."
+            ls -la iosApp | head -10
+          else
+            echo "❌ iosApp is still missing or invalid."
+            exit 1
+          fi
+
+      # ============================================================
+      # BUILD: Now actually build the iOS app
       # ============================================================
       - name: Build for iPhone Simulator
         run: |
           cd iosApp
           
-          # Check if workspace exists
           if [ -f "iosApp.xcworkspace" ]; then
-            echo "📱 Building with workspace: iosApp.xcworkspace"
+            echo "📱 Building with workspace..."
             xcodebuild build \
               -workspace iosApp.xcworkspace \
               -scheme iosApp \
@@ -41,10 +85,8 @@ jobs:
               CODE_SIGN_IDENTITY="" \
               CODE_SIGNING_REQUIRED=NO \
               CODE_SIGNING_ALLOWED=NO
-          
-          # Check if project exists
           elif [ -f "iosApp.xcodeproj" ]; then
-            echo "📱 Building with project: iosApp.xcodeproj"
+            echo "📱 Building with project..."
             xcodebuild build \
               -project iosApp.xcodeproj \
               -scheme iosApp \
@@ -54,28 +96,20 @@ jobs:
               CODE_SIGN_IDENTITY="" \
               CODE_SIGNING_REQUIRED=NO \
               CODE_SIGNING_ALLOWED=NO
-          
           else
             echo "❌ ERROR: No .xcworkspace or .xcodeproj found inside iosApp/"
-            echo "Files in this folder:"
             ls -la
             exit 1
           fi
 
-      # ============================================================
-      # FIXED: Zip the .app from the correct location inside iosApp/build
-      # ============================================================
       - name: Zip Simulator App
         run: |
-          # The app is built inside iosApp/build/Build/Products/Debug-iphonesimulator/
           APP_PATH="iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app"
-          
           if [ -d "$APP_PATH" ]; then
-            echo "✅ Found app at $APP_PATH"
             cd iosApp/build/Build/Products/Debug-iphonesimulator/
             zip -r ../../../../../ios-simulator-app.zip iosApp.app
           else
-            echo "❌ Could not find iosApp.app, searching manually..."
+            echo "❌ App not found at $APP_PATH"
             find . -name "*.app"
             exit 1
           fi
