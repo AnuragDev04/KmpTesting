@@ -1,10 +1,6 @@
 name: Build KMP iOS (Simulator)
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
@@ -21,29 +17,53 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Build KMP XCFramework (Fix permissions)
+      - name: Build KMP XCFramework
         run: |
           chmod +x gradlew
           ./gradlew :shared:assembleXCFramework
-        # If your module isn't called "shared", change it here
 
-      - name: Build for iPhone Simulator (No signing)
-        working-directory: iosApp  # Change if your iOS folder has a different name
+      # --- DEBUG: Shows you exactly what files exist ---
+      - name: Debug directory structure
         run: |
-          xcodebuild build \
-            -workspace iosApp.xcworkspace \
-            -scheme iosApp \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -derivedDataPath build \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+          echo "Root files:"
+          ls -la
+          echo ""
+          echo "Searching for iOS projects/workspaces:"
+          find . -name "*.xcworkspace" -o -name "*.xcodeproj" | head -10
+
+      # --- BUILD: Auto-detects workspace vs project ---
+      - name: Build for iPhone Simulator
+        run: |
+          # Try to find the main workspace or project
+          if [ -f "iosApp.xcworkspace" ]; then
+            echo "Found iosApp.xcworkspace"
+            xcodebuild build -workspace iosApp.xcworkspace -scheme iosApp -configuration Debug -sdk iphonesimulator -derivedDataPath build CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+          elif [ -f "iosApp.xcodeproj" ]; then
+            echo "Found iosApp.xcodeproj"
+            xcodebuild build -project iosApp.xcodeproj -scheme iosApp -configuration Debug -sdk iphonesimulator -derivedDataPath build CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+          elif [ -f "composeApp/iosApp.xcworkspace" ]; then
+            echo "Found composeApp/iosApp.xcworkspace"
+            cd composeApp && xcodebuild build -workspace iosApp.xcworkspace -scheme iosApp -configuration Debug -sdk iphonesimulator -derivedDataPath build CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+          else
+            echo "ERROR: Could not find iosApp.xcworkspace or iosApp.xcodeproj!"
+            echo "Here are all files in the root to help you debug:"
+            ls -la
+            exit 1
+          fi
 
       - name: Zip Simulator App
         run: |
-          cd iosApp/build/Build/Products/Debug-iphonesimulator
-          zip -r ../../../../../ios-simulator-app.zip iosApp.app
+          # Find where the .app was built
+          APP_PATH=$(find . -name "*.app" -path "*/Debug-iphonesimulator/*" | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Could not find .app file, searching manually..."
+            find . -name "*.app"
+            exit 1
+          fi
+          echo "Found app at: $APP_PATH"
+          APP_DIR=$(dirname "$APP_PATH")
+          cd "$APP_DIR"
+          zip -r ../../../ios-simulator-app.zip *.app
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
