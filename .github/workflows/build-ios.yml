@@ -22,48 +22,63 @@ jobs:
           chmod +x gradlew
           ./gradlew :shared:assembleXCFramework
 
-      # --- DEBUG: Shows you exactly what files exist ---
-      - name: Debug directory structure
-        run: |
-          echo "Root files:"
-          ls -la
-          echo ""
-          echo "Searching for iOS projects/workspaces:"
-          find . -name "*.xcworkspace" -o -name "*.xcodeproj" | head -10
-
-      # --- BUILD: Auto-detects workspace vs project ---
+      # ============================================================
+      # FIXED: Build the iOS app by going INSIDE the iosApp folder
+      # ============================================================
       - name: Build for iPhone Simulator
         run: |
-          # Try to find the main workspace or project
+          cd iosApp
+          
+          # Check if workspace exists
           if [ -f "iosApp.xcworkspace" ]; then
-            echo "Found iosApp.xcworkspace"
-            xcodebuild build -workspace iosApp.xcworkspace -scheme iosApp -configuration Debug -sdk iphonesimulator -derivedDataPath build CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+            echo "📱 Building with workspace: iosApp.xcworkspace"
+            xcodebuild build \
+              -workspace iosApp.xcworkspace \
+              -scheme iosApp \
+              -configuration Debug \
+              -sdk iphonesimulator \
+              -derivedDataPath build \
+              CODE_SIGN_IDENTITY="" \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO
+          
+          # Check if project exists
           elif [ -f "iosApp.xcodeproj" ]; then
-            echo "Found iosApp.xcodeproj"
-            xcodebuild build -project iosApp.xcodeproj -scheme iosApp -configuration Debug -sdk iphonesimulator -derivedDataPath build CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-          elif [ -f "composeApp/iosApp.xcworkspace" ]; then
-            echo "Found composeApp/iosApp.xcworkspace"
-            cd composeApp && xcodebuild build -workspace iosApp.xcworkspace -scheme iosApp -configuration Debug -sdk iphonesimulator -derivedDataPath build CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+            echo "📱 Building with project: iosApp.xcodeproj"
+            xcodebuild build \
+              -project iosApp.xcodeproj \
+              -scheme iosApp \
+              -configuration Debug \
+              -sdk iphonesimulator \
+              -derivedDataPath build \
+              CODE_SIGN_IDENTITY="" \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO
+          
           else
-            echo "ERROR: Could not find iosApp.xcworkspace or iosApp.xcodeproj!"
-            echo "Here are all files in the root to help you debug:"
+            echo "❌ ERROR: No .xcworkspace or .xcodeproj found inside iosApp/"
+            echo "Files in this folder:"
             ls -la
             exit 1
           fi
 
+      # ============================================================
+      # FIXED: Zip the .app from the correct location inside iosApp/build
+      # ============================================================
       - name: Zip Simulator App
         run: |
-          # Find where the .app was built
-          APP_PATH=$(find . -name "*.app" -path "*/Debug-iphonesimulator/*" | head -1)
-          if [ -z "$APP_PATH" ]; then
-            echo "Could not find .app file, searching manually..."
+          # The app is built inside iosApp/build/Build/Products/Debug-iphonesimulator/
+          APP_PATH="iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app"
+          
+          if [ -d "$APP_PATH" ]; then
+            echo "✅ Found app at $APP_PATH"
+            cd iosApp/build/Build/Products/Debug-iphonesimulator/
+            zip -r ../../../../../ios-simulator-app.zip iosApp.app
+          else
+            echo "❌ Could not find iosApp.app, searching manually..."
             find . -name "*.app"
             exit 1
           fi
-          echo "Found app at: $APP_PATH"
-          APP_DIR=$(dirname "$APP_PATH")
-          cd "$APP_DIR"
-          zip -r ../../../ios-simulator-app.zip *.app
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
