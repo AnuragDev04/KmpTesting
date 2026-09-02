@@ -80,17 +80,31 @@ jobs:
             exit 1
           fi
 
+      # ============================================================
+      # ZIP: Find the built .app dynamically (product name may not
+      # match the scheme name, e.g. scheme "iosApp" -> CareHome.app)
+      # ============================================================
       - name: Zip Simulator App
         run: |
-          APP_PATH="iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app"
-          if [ -d "$APP_PATH" ]; then
-            cd iosApp/build/Build/Products/Debug-iphonesimulator/
-            zip -r ../../../../../ios-simulator-app.zip iosApp.app
-          else
-            echo "❌ App not found at $APP_PATH"
-            find . -name "*.app"
+          BUILD_DIR="iosApp/build/Build/Products/Debug-iphonesimulator"
+
+          if [ ! -d "$BUILD_DIR" ]; then
+            echo "❌ Build products directory not found at $BUILD_DIR"
+            find iosApp/build -maxdepth 4 -type d
             exit 1
           fi
+
+          APP_NAME=$(find "$BUILD_DIR" -maxdepth 1 -name "*.app" -exec basename {} \; | head -1)
+
+          if [ -z "$APP_NAME" ]; then
+            echo "❌ No .app found in $BUILD_DIR"
+            ls -la "$BUILD_DIR"
+            exit 1
+          fi
+
+          echo "📦 Found app: $APP_NAME"
+          cd "$BUILD_DIR"
+          zip -r "$GITHUB_WORKSPACE/ios-simulator-app.zip" "$APP_NAME"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
