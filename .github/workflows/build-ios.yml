@@ -23,47 +23,25 @@ jobs:
           ./gradlew :shared:assembleXCFramework
 
       # ============================================================
-      # FIX: Check if iosApp is a real folder or a stub file
+      # VERIFY: Confirm iosApp folder and Xcode project exist
       # ============================================================
-      - name: Fix missing iosApp folder
+      - name: Verify iosApp folder
         run: |
-          echo "📂 Checking current iosApp type..."
-          ls -ld iosApp
-          
-          # If it's a file (and not a directory), we need to recover it
-          if [ -f "iosApp" ]; then
-            echo "⚠️  iosApp is a regular file (stub). Searching for actual project..."
-            
-            # Check if the big zip file contains the Xcode project
-            if unzip -l zipfile.zip | grep -q "\.xcodeproj"; then
-              echo "✅ Found Xcode project inside zipfile.zip! Extracting..."
-              unzip -q zipfile.zip -d ./extracted_ios
-              # Find the actual iosApp folder inside the zip
-              EXTRACTED_DIR=$(find ./extracted_ios -name "iosApp.xcodeproj" -o -name "iosApp.xcworkspace" | head -1 | xargs dirname)
-              if [ -n "$EXTRACTED_DIR" ]; then
-                echo "📁 Moving extracted iosApp to root..."
-                rm -f iosApp  # Remove the stub file
-                mv "$EXTRACTED_DIR" ./iosApp
-              fi
-            else
-              echo "❌ No Xcode project found in zipfile.zip either!"
-              echo "📝 Content of the iosApp stub file:"
-              cat iosApp
-              echo ""
-              echo "💡 SOLUTION:"
-              echo "  1. Commit the actual 'iosApp' folder from your local machine."
-              echo "  2. Or run './gradlew createXcodeProject' to generate it."
-              echo "  3. Then push the folder to GitHub."
-              exit 1
-            fi
+          echo "📂 Checking iosApp..."
+          if [ ! -d "iosApp" ]; then
+            echo "❌ iosApp directory not found at repo root."
+            ls -la
+            exit 1
           fi
-          
-          # Final verification
-          if [ -d "iosApp" ]; then
-            echo "✅ Success! iosApp is now a valid directory."
-            ls -la iosApp | head -10
+
+          echo "✅ iosApp is a valid directory."
+          ls -la iosApp
+
+          if [ -d "iosApp/iosApp.xcworkspace" ] || [ -d "iosApp/iosApp.xcodeproj" ]; then
+            echo "✅ Found Xcode project/workspace."
           else
-            echo "❌ iosApp is still missing or invalid."
+            echo "❌ No .xcworkspace or .xcodeproj found inside iosApp/"
+            echo "💡 Make sure iosApp.xcodeproj (or .xcworkspace) is committed to the repo."
             exit 1
           fi
 
@@ -73,8 +51,8 @@ jobs:
       - name: Build for iPhone Simulator
         run: |
           cd iosApp
-          
-          if [ -f "iosApp.xcworkspace" ]; then
+
+          if [ -d "iosApp.xcworkspace" ]; then
             echo "📱 Building with workspace..."
             xcodebuild build \
               -workspace iosApp.xcworkspace \
@@ -85,7 +63,7 @@ jobs:
               CODE_SIGN_IDENTITY="" \
               CODE_SIGNING_REQUIRED=NO \
               CODE_SIGNING_ALLOWED=NO
-          elif [ -f "iosApp.xcodeproj" ]; then
+          elif [ -d "iosApp.xcodeproj" ]; then
             echo "📱 Building with project..."
             xcodebuild build \
               -project iosApp.xcodeproj \
