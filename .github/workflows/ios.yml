@@ -2,38 +2,40 @@ name: iOS CI
 
 on:
   push:
-    branches: [ "**" ]
+    branches: ["**"]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 90
-    env:
-      HAS_CERT: ${{ secrets.APPLE_CERTIFICATE_P12 != '' }}
-    steps:
+
+env:
+      HAS_CERT: ${{ secrets.APPLE_CERTIFICATE_P12 != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_PROVISIONING_PROFILE != '' && secrets.APPLE_TEAM_ID != '' }}
+
+steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+- name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
-          distribution: 'temurin'
+          java-version: "21"
+          distribution: temurin
 
-      - name: Grant gradlew execute permission
+- name: Grant gradlew execute permission
         run: chmod +x gradlew
 
-      # ── Cache ─────────────────────────────────────────────────────────────────
+# ── Cache ──────────────────────────────────────────────────────────────
 
-      - name: Cache Kotlin/Native toolchain
+- name: Cache Kotlin/Native toolchain
         uses: actions/cache@v4
         with:
           path: ~/.konan
           key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
           restore-keys: konan-${{ runner.os }}-
 
-      - name: Cache Gradle dependencies
+- name: Cache Gradle dependencies
         uses: actions/cache@v4
         with:
           path: |
@@ -42,30 +44,93 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
           restore-keys: gradle-${{ runner.os }}-
 
-      # ── Xcode ─────────────────────────────────────────────────────────────────
+# ── Xcode ──────────────────────────────────────────────────────────────
 
-      - name: Select latest Xcode
+- name: Select Xcode
+        shell: bash
         run: |
-          XCODE=$(ls -1d /Applications/Xcode*.app 2>/dev/null | sort -r | head -1)
+          set -euo pipefail
+          XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' \
+            | sort -r | head -1)
+          if [[ -z "$XCODE" ]]; then
+            echo "No Xcode installation found in /Applications" >&2
+            exit 1
+          fi
           echo "Using Xcode: $XCODE"
-          sudo xcode-select -s "$XCODE"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
           xcodebuild -version
 
-      # ── Kotlin/Native compilation ─────────────────────────────────────────────
+# ── Kotlin/Native compilation ──────────────────────────────────────────
+      # Do not assume the Gradle module is named :app.
 
-      - name: Compile Kotlin/Native (all iOS targets)
+- name: Find Gradle module with iOS targets
+        id: ios-module
+        shell: bash
         run: |
-          ./gradlew \
-            :app:compileKotlinIosSimulatorArm64 \
-            :app:compileKotlinIosX64 \
-            :app:compileKotlinIosArm64 \
-            --stacktrace
+          set -euo pipefail
 
-      # ── Simulator build ───────────────────────────────────────────────────────
+cat > "$RUNNER_TEMP/find-ios-project.gradle" <<'GRADLE'
+          gradle.projectsEvaluated {
+              def matches = rootProject.allprojects.findAll { project ->
+                  project.tasks.names.contains('compileKotlinIosSimulatorArm64') &&
+                  project.tasks.names.contains('compileKotlinIosArm64')
+              }
 
-      - name: Build Xcode project (iOS Simulator)
+if (matches.size() != 1) {
+                  throw new GradleException(
+                      "Expected exactly one Gradle project with iOS simulator ARM64 " +
+                      "and device ARM64 compilation tasks; found: " +
+                      matches.collect { it.path } +
+                      ". Check settings.gradle.kts and the declared iOS targets."
+                  )
+              }
+
+def project = matches.first()
+              def hasX64 = project.tasks.names.contains('compileKotlinIosX64')
+              def output = System.getenv('GITHUB_OUTPUT')
+
+new File(output).withWriterAppend('UTF-8') { writer ->
+                  writer.write("module=${project.path}\n")
+                  writer.write("has_x64=${hasX64}\n")
+              }
+
+println "iOS Gradle module: ${project.path}; iosX64 target: ${hasX64}"
+          }
+          GRADLE
+
+./gradlew -I "$RUNNER_TEMP/find-ios-project.gradle" help --console=plain
+
+- name: Compile Kotlin/Native iOS targets
+        shell: bash
+        env:
+          IOS_MODULE: ${{ steps.ios-module.outputs.module }}
+          HAS_IOS_X64: ${{ steps.ios-module.outputs.has_x64 }}
         run: |
-          set -o pipefail
+          set -euo pipefail
+
+# A root-project task uses ":taskName"; a subproject uses
+          # ":module:taskName".
+          PREFIX="${IOS_MODULE%:}"
+
+TASKS=(
+            "${PREFIX}:compileKotlinIosSimulatorArm64"
+            "${PREFIX}:compileKotlinIosArm64"
+          )
+
+if [[ "$HAS_IOS_X64" == "true" ]]; then
+            TASKS+=("${PREFIX}:compileKotlinIosX64")
+          fi
+
+printf 'Compiling Gradle tasks:\n'
+          printf '  %s\n' "${TASKS[@]}"
+          ./gradlew "${TASKS[@]}" --stacktrace
+
+# ── Simulator build ────────────────────────────────────────────────────
+
+- name: Build Xcode project (iOS Simulator)
+        shell: bash
+        run: |
+          set -euo pipefail
           xcodebuild build \
             -project iosApp/iosApp.xcodeproj \
             -scheme iosApp \
@@ -77,21 +142,21 @@ jobs:
           tail -40 /tmp/xcode_sim.log
           grep -q "BUILD SUCCEEDED" /tmp/xcode_sim.log
 
-      - name: Upload simulator build
-        if: always()
+- name: Upload simulator build
         uses: actions/upload-artifact@v4
         with:
           name: ProgMetronome-simulator-${{ github.run_number }}
-          path: /tmp/simulator-build/iosApp.app
+          path: /tmp/simulator-build/*.app
           retention-days: 14
-          if-no-files-found: warn
+          if-no-files-found: error
 
-      # ── Unsigned device IPA ───────────────────────────────────────────────────
-      # Sideloadly on Windows can re-sign this with an Apple ID — no Mac needed.
+# ── Unsigned device IPA ────────────────────────────────────────────────
+      # This package is unsigned; it must be signed before installation.
 
-      - name: Build unsigned device IPA
+- name: Build unsigned device IPA
+        shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           xcodebuild build \
             -project iosApp/iosApp.xcodeproj \
             -scheme iosApp \
@@ -105,32 +170,45 @@ jobs:
             2>&1 | tee /tmp/xcode_device.log
           tail -40 /tmp/xcode_device.log
           grep -q "BUILD SUCCEEDED" /tmp/xcode_device.log
-          mkdir -p /tmp/Payload
-          APP=$(find /tmp/device-build -maxdepth 1 -name "*.app" | head -1)
-          cp -r "$APP" /tmp/Payload/
-          cd /tmp && zip -qr ProgMetronome-unsigned.ipa Payload/
 
-      - name: Upload unsigned device IPA
+APP=$(find /tmp/device-build -maxdepth 1 -type d -name '*.app' -print -quit)
+          if [[ -z "$APP" ]]; then
+            echo "Device build succeeded, but no .app was found." >&2
+            exit 1
+          fi
+
+mkdir -p /tmp/Payload
+          cp -R "$APP" /tmp/Payload/
+          (
+            cd /tmp
+            zip -qr ProgMetronome-unsigned.ipa Payload
+          )
+
+- name: Upload unsigned device IPA
         uses: actions/upload-artifact@v4
         with:
           name: ProgMetronome-unsigned-${{ github.run_number }}
           path: /tmp/ProgMetronome-unsigned.ipa
           retention-days: 30
+          if-no-files-found: error
 
-      # ── Signed IPA (only when cert secrets are present; no App Store upload) ──
+# ── Signed IPA, when all signing secrets are present ──────────────────
 
-      - name: Import certificate and provisioning profile
+- name: Import certificate and provisioning profile
         if: env.HAS_CERT == 'true'
+        shell: bash
         env:
-          CERTIFICATE_P12:      ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
           CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
-          KEYCHAIN_PASSWORD:    ${{ github.run_id }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
         run: |
-          echo "$CERTIFICATE_P12" | base64 --decode > certificate.p12
+          set -euo pipefail
+
+echo "$CERTIFICATE_P12" | base64 --decode > certificate.p12
           echo "$PROVISIONING_PROFILE" | base64 --decode > profile.mobileprovision
 
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
@@ -139,49 +217,47 @@ jobs:
           security set-key-partition-list \
             -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
 
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp profile.mobileprovision \
-            ~/Library/MobileDevice/Provisioning\ Profiles/
+            "$HOME/Library/MobileDevice/Provisioning Profiles/profile.mobileprovision"
 
-      - name: Archive for device
+- name: Archive for device
         if: env.HAS_CERT == 'true'
+        shell: bash
         env:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          set -o pipefail
+          set -euo pipefail
 
-          security cms -D -i \
-            ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision \
+security cms -D -i \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/profile.mobileprovision" \
             > /tmp/profile.plist
-
           PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /tmp/profile.plist)
 
-          xcodebuild archive \
+xcodebuild archive \
             -project iosApp/iosApp.xcodeproj \
             -scheme iosApp \
             -configuration Release \
             -destination "generic/platform=iOS" \
             -archivePath build/iosApp.xcarchive \
             DEVELOPMENT_TEAM="$TEAM_ID" \
-            CODE_SIGN_STYLE="Manual" \
+            CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE="$PROFILE_UUID" \
             2>&1 | tail -40
 
-      - name: Export IPA
+- name: Export IPA
         if: env.HAS_CERT == 'true'
+        shell: bash
         env:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          set -o pipefail
+          set -euo pipefail
 
-          security cms -D -i \
-            ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision \
-            > /tmp/profile.plist
-          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /tmp/profile.plist)
+PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /tmp/profile.plist)
           echo "Using profile UUID: $PROFILE_UUID"
 
-          cat > /tmp/ExportOptions.plist << PLIST
+cat > /tmp/ExportOptions.plist << PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -205,16 +281,17 @@ jobs:
           </plist>
           PLIST
 
-          xcodebuild -exportArchive \
+xcodebuild -exportArchive \
             -archivePath build/iosApp.xcarchive \
             -exportOptionsPlist /tmp/ExportOptions.plist \
             -exportPath build/iosApp-export \
             2>&1 | tail -20
 
-      - name: Upload signed IPA artifact
+- name: Upload signed IPA artifact
         if: env.HAS_CERT == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ProgMetronome-${{ github.run_number }}.ipa
           path: build/iosApp-export/*.ipa
           retention-days: 30
+          if-no-files-found: error
