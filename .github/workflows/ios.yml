@@ -9,7 +9,6 @@ on:
 jobs:
   build:
     name: Build iOS App
-    # macos-13 or macos-14 is recommended for latest Xcode versions
     runs-on: macos-latest 
 
     steps:
@@ -22,35 +21,27 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
           
-      # Replaces manual caching steps with the official, optimized Gradle action
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
       - name: Grant gradlew execute permission
         run: chmod +x gradlew
 
-      - name: Select latest Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-
-      # FIX: Run without daemon and allocate more memory to prevent OOM kills
+      # Pre-compile Kotlin/Native to apply memory fixes and avoid Xcode build phase OOM crashes
       - name: Compile Kotlin/Native (all iOS targets)
         run: ./gradlew assembleIosSimulatorArm64Debug assembleIosX64Debug --no-daemon -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g -Dkotlin.daemon.jvm.options=-Xmx4g"
 
-      # FIX: Specify a custom DerivedData path so we know exactly where the .app file will be output
-      - name: Build Xcode project (iOS Simulator)
-        run: |
-          set -o pipefail && xcodebuild build \
-            -project iosApp/iosApp.xcodeproj \
-            -scheme iosApp \
-            -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
-            -derivedDataPath build/ios_simulator \
-            | xcpretty
-
-      # FIX: Point to the new DerivedData output path
-      - name: Upload simulator build
-        uses: actions/upload-artifact@v4
-        if: always() # Uploads even if tests fail, but skips if preceding compilation crashed
+      # Replaces manual xcodebuild with the Marketplace action
+      - name: KMP Build iOS App
+        uses: openMF/mifos-x-actionhub-build-ios-app@v1.0.3
         with:
-          name: ios-simulator-app
-          path: build/ios_simulator/Build/Products/Debug-iphonesimulator/*.app
-          retention-days: 7
+          build_type: Debug
+          
+          # Uncomment and configure the below fields via GitHub Secrets 
+          # ONLY if you are building for Release / App Store / AdHoc
+          
+          # app_identifier: com.yourname.app
+          # match_type: development
+          # appstore_key_id: ${{ secrets.APPSTORE_KEY_ID }}
+          # appstore_issuer_id: ${{ secrets.APPSTORE_ISSUER_ID }}
+          # appstore_auth_key: ${{ secrets.APPSTORE_AUTH_KEY }}
