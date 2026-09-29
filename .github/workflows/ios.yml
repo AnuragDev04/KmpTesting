@@ -9,8 +9,7 @@ jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 90
-
-env:
+    env:
       HAS_CERT: ${{ secrets.APPLE_CERTIFICATE_P12 != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_PROVISIONING_PROFILE != '' && secrets.APPLE_TEAM_ID != '' }}
 
 steps:
@@ -25,8 +24,6 @@ steps:
 
 - name: Grant gradlew execute permission
         run: chmod +x gradlew
-
-# ── Cache ──────────────────────────────────────────────────────────────
 
 - name: Cache Kotlin/Native toolchain
         uses: actions/cache@v4
@@ -44,8 +41,6 @@ steps:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
           restore-keys: gradle-${{ runner.os }}-
 
-# ── Xcode ──────────────────────────────────────────────────────────────
-
 - name: Select Xcode
         shell: bash
         run: |
@@ -53,81 +48,23 @@ steps:
           XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' \
             | sort -r | head -1)
           if [[ -z "$XCODE" ]]; then
-            echo "No Xcode installation found in /Applications" >&2
+            echo "Xcode was not found in /Applications" >&2
             exit 1
           fi
-          echo "Using Xcode: $XCODE"
           sudo xcode-select -s "$XCODE/Contents/Developer"
           xcodebuild -version
 
-# ── Kotlin/Native compilation ──────────────────────────────────────────
-      # Do not assume the Gradle module is named :app.
-
-- name: Find Gradle module with iOS targets
-        id: ios-module
-        shell: bash
-        run: |
-          set -euo pipefail
-
-cat > "$RUNNER_TEMP/find-ios-project.gradle" <<'GRADLE'
-          gradle.projectsEvaluated {
-              def matches = rootProject.allprojects.findAll { project ->
-                  project.tasks.names.contains('compileKotlinIosSimulatorArm64') &&
-                  project.tasks.names.contains('compileKotlinIosArm64')
-              }
-
-if (matches.size() != 1) {
-                  throw new GradleException(
-                      "Expected exactly one Gradle project with iOS simulator ARM64 " +
-                      "and device ARM64 compilation tasks; found: " +
-                      matches.collect { it.path } +
-                      ". Check settings.gradle.kts and the declared iOS targets."
-                  )
-              }
-
-def project = matches.first()
-              def hasX64 = project.tasks.names.contains('compileKotlinIosX64')
-              def output = System.getenv('GITHUB_OUTPUT')
-
-new File(output).withWriterAppend('UTF-8') { writer ->
-                  writer.write("module=${project.path}\n")
-                  writer.write("has_x64=${hasX64}\n")
-              }
-
-println "iOS Gradle module: ${project.path}; iosX64 target: ${hasX64}"
-          }
-          GRADLE
-
-./gradlew -I "$RUNNER_TEMP/find-ios-project.gradle" help --console=plain
-
 - name: Compile Kotlin/Native iOS targets
         shell: bash
-        env:
-          IOS_MODULE: ${{ steps.ios-module.outputs.module }}
-          HAS_IOS_X64: ${{ steps.ios-module.outputs.has_x64 }}
         run: |
           set -euo pipefail
+          ./gradlew \
+            :sharedLogic:compileKotlinIosSimulatorArm64 \
+            :sharedLogic:compileKotlinIosX64 \
+            :sharedLogic:compileKotlinIosArm64 \
+            --stacktrace
 
-# A root-project task uses ":taskName"; a subproject uses
-          # ":module:taskName".
-          PREFIX="${IOS_MODULE%:}"
-
-TASKS=(
-            "${PREFIX}:compileKotlinIosSimulatorArm64"
-            "${PREFIX}:compileKotlinIosArm64"
-          )
-
-if [[ "$HAS_IOS_X64" == "true" ]]; then
-            TASKS+=("${PREFIX}:compileKotlinIosX64")
-          fi
-
-printf 'Compiling Gradle tasks:\n'
-          printf '  %s\n' "${TASKS[@]}"
-          ./gradlew "${TASKS[@]}" --stacktrace
-
-# ── Simulator build ────────────────────────────────────────────────────
-
-- name: Build Xcode project (iOS Simulator)
+- name: Build Xcode project for iOS Simulator
         shell: bash
         run: |
           set -euo pipefail
@@ -139,19 +76,14 @@ printf 'Compiling Gradle tasks:\n'
             CONFIGURATION_BUILD_DIR=/tmp/simulator-build \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee /tmp/xcode_sim.log
-          tail -40 /tmp/xcode_sim.log
-          grep -q "BUILD SUCCEEDED" /tmp/xcode_sim.log
 
 - name: Upload simulator build
         uses: actions/upload-artifact@v4
         with:
-          name: ProgMetronome-simulator-${{ github.run_number }}
-          path: /tmp/simulator-build/*.app
+          name: CareHome-simulator-${{ github.run_number }}
+          path: /tmp/simulator-build/CareHome.app
           retention-days: 14
           if-no-files-found: error
-
-# ── Unsigned device IPA ────────────────────────────────────────────────
-      # This package is unsigned; it must be signed before installation.
 
 - name: Build unsigned device IPA
         shell: bash
@@ -168,31 +100,23 @@ printf 'Compiling Gradle tasks:\n'
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             2>&1 | tee /tmp/xcode_device.log
-          tail -40 /tmp/xcode_device.log
-          grep -q "BUILD SUCCEEDED" /tmp/xcode_device.log
 
-APP=$(find /tmp/device-build -maxdepth 1 -type d -name '*.app' -print -quit)
-          if [[ -z "$APP" ]]; then
-            echo "Device build succeeded, but no .app was found." >&2
-            exit 1
-          fi
+test -d /tmp/device-build/CareHome.app
+          mkdir -p /tmp/Payload
+          cp -R /tmp/device-build/CareHome.app /tmp/Payload/
 
-mkdir -p /tmp/Payload
-          cp -R "$APP" /tmp/Payload/
-          (
+(
             cd /tmp
-            zip -qr ProgMetronome-unsigned.ipa Payload
+            zip -qr CareHome-unsigned.ipa Payload
           )
 
 - name: Upload unsigned device IPA
         uses: actions/upload-artifact@v4
         with:
-          name: ProgMetronome-unsigned-${{ github.run_number }}
-          path: /tmp/ProgMetronome-unsigned.ipa
+          name: CareHome-unsigned-${{ github.run_number }}
+          path: /tmp/CareHome-unsigned.ipa
           retention-days: 30
           if-no-files-found: error
-
-# ── Signed IPA, when all signing secrets are present ──────────────────
 
 - name: Import certificate and provisioning profile
         if: env.HAS_CERT == 'true'
@@ -215,13 +139,16 @@ security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security import certificate.p12 -k build.keychain \
             -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list \
-            -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+            -S apple-tool:,apple: -s \
+            -k "$KEYCHAIN_PASSWORD" build.keychain
 
 mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp profile.mobileprovision \
             "$HOME/Library/MobileDevice/Provisioning Profiles/profile.mobileprovision"
 
-- name: Archive for device
+security cms -D -i profile.mobileprovision > /tmp/profile.plist
+
+- name: Archive signed device app
         if: env.HAS_CERT == 'true'
         shell: bash
         env:
@@ -229,10 +156,8 @@ mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
         run: |
           set -euo pipefail
 
-security cms -D -i \
-            "$HOME/Library/MobileDevice/Provisioning Profiles/profile.mobileprovision" \
-            > /tmp/profile.plist
-          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /tmp/profile.plist)
+PROFILE_UUID=$(/usr/libexec/PlistBuddy \
+            -c "Print UUID" /tmp/profile.plist)
 
 xcodebuild archive \
             -project iosApp/iosApp.xcodeproj \
@@ -241,12 +166,13 @@ xcodebuild archive \
             -destination "generic/platform=iOS" \
             -archivePath build/iosApp.xcarchive \
             DEVELOPMENT_TEAM="$TEAM_ID" \
+            TEAM_ID="$TEAM_ID" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE="$PROFILE_UUID" \
-            2>&1 | tail -40
+            2>&1 | tee /tmp/xcode_archive.log
 
-- name: Export IPA
+- name: Export signed IPA
         if: env.HAS_CERT == 'true'
         shell: bash
         env:
@@ -254,8 +180,12 @@ xcodebuild archive \
         run: |
           set -euo pipefail
 
-PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /tmp/profile.plist)
-          echo "Using profile UUID: $PROFILE_UUID"
+PROFILE_UUID=$(/usr/libexec/PlistBuddy \
+            -c "Print UUID" /tmp/profile.plist)
+
+APP_PLIST="build/iosApp.xcarchive/Products/Applications/CareHome.app/Info.plist"
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy \
+            -c "Print CFBundleIdentifier" "$APP_PLIST")
 
 cat > /tmp/ExportOptions.plist << PLIST
           <?xml version="1.0" encoding="UTF-8"?>
@@ -266,15 +196,9 @@ cat > /tmp/ExportOptions.plist << PLIST
               <string>app-store-connect</string>
               <key>teamID</key>
               <string>${TEAM_ID}</string>
-              <key>uploadBitcode</key>
-              <false/>
-              <key>uploadSymbols</key>
-              <true/>
-              <key>stripSwiftSymbols</key>
-              <true/>
               <key>provisioningProfiles</key>
               <dict>
-                  <key>com.jayc180.rhythmengine</key>
+                  <key>${BUNDLE_ID}</key>
                   <string>${PROFILE_UUID}</string>
               </dict>
           </dict>
@@ -285,13 +209,13 @@ xcodebuild -exportArchive \
             -archivePath build/iosApp.xcarchive \
             -exportOptionsPlist /tmp/ExportOptions.plist \
             -exportPath build/iosApp-export \
-            2>&1 | tail -20
+            2>&1 | tee /tmp/xcode_export.log
 
-- name: Upload signed IPA artifact
+- name: Upload signed IPA
         if: env.HAS_CERT == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ProgMetronome-${{ github.run_number }}.ipa
+          name: CareHome-signed-${{ github.run_number }}
           path: build/iosApp-export/*.ipa
           retention-days: 30
           if-no-files-found: error
