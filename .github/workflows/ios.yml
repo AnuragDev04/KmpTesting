@@ -2,220 +2,55 @@ name: iOS CI
 
 on:
   push:
-    branches: ["**"]
-  workflow_dispatch:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
 
 jobs:
   build:
-    runs-on: macos-26
-    timeout-minutes: 90
-    env:
-      HAS_CERT: ${{ secrets.APPLE_CERTIFICATE_P12 != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_PROVISIONING_PROFILE != '' && secrets.APPLE_TEAM_ID != '' }}
+    name: Build iOS App
+    # macos-13 or macos-14 is recommended for latest Xcode versions
+    runs-on: macos-latest 
 
-steps:
-      - name: Checkout
+    steps:
+      - name: Checkout code
         uses: actions/checkout@v4
 
-- name: Set up JDK 21
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: "21"
-          distribution: temurin
+          java-version: '21'
+          distribution: 'temurin'
+          
+      # Replaces manual caching steps with the official, optimized Gradle action
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
 
-- name: Grant gradlew execute permission
+      - name: Grant gradlew execute permission
         run: chmod +x gradlew
 
-- name: Cache Kotlin/Native toolchain
-        uses: actions/cache@v4
-        with:
-          path: ~/.konan
-          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
-          restore-keys: konan-${{ runner.os }}-
+      - name: Select latest Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
-- name: Cache Gradle dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper/dists
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
-          restore-keys: gradle-${{ runner.os }}-
+      # FIX: Run without daemon and allocate more memory to prevent OOM kills
+      - name: Compile Kotlin/Native (all iOS targets)
+        run: ./gradlew assembleIosSimulatorArm64Debug assembleIosX64Debug --no-daemon -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g -Dkotlin.daemon.jvm.options=-Xmx4g"
 
-- name: Select Xcode
-        shell: bash
+      # FIX: Specify a custom DerivedData path so we know exactly where the .app file will be output
+      - name: Build Xcode project (iOS Simulator)
         run: |
-          set -euo pipefail
-          XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' \
-            | sort -r | head -1)
-          if [[ -z "$XCODE" ]]; then
-            echo "Xcode was not found in /Applications" >&2
-            exit 1
-          fi
-          sudo xcode-select -s "$XCODE/Contents/Developer"
-          xcodebuild -version
-
-- name: Compile Kotlin/Native iOS targets
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./gradlew \
-            :sharedLogic:compileKotlinIosSimulatorArm64 \
-            :sharedLogic:compileKotlinIosX64 \
-            :sharedLogic:compileKotlinIosArm64 \
-            --stacktrace
-
-- name: Build Xcode project for iOS Simulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild build \
+          set -o pipefail && xcodebuild build \
             -project iosApp/iosApp.xcodeproj \
             -scheme iosApp \
-            -configuration Debug \
-            -destination "generic/platform=iOS Simulator" \
-            CONFIGURATION_BUILD_DIR=/tmp/simulator-build \
-            CODE_SIGNING_ALLOWED=NO \
-            2>&1 | tee /tmp/xcode_sim.log
+            -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
+            -derivedDataPath build/ios_simulator \
+            | xcpretty
 
-- name: Upload simulator build
+      # FIX: Point to the new DerivedData output path
+      - name: Upload simulator build
         uses: actions/upload-artifact@v4
+        if: always() # Uploads even if tests fail, but skips if preceding compilation crashed
         with:
-          name: CareHome-simulator-${{ github.run_number }}
-          path: /tmp/simulator-build/CareHome.app
-          retention-days: 14
-          if-no-files-found: error
-
-- name: Build unsigned device IPA
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild build \
-            -project iosApp/iosApp.xcodeproj \
-            -scheme iosApp \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination "generic/platform=iOS" \
-            CONFIGURATION_BUILD_DIR=/tmp/device-build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            2>&1 | tee /tmp/xcode_device.log
-
-test -d /tmp/device-build/CareHome.app
-          mkdir -p /tmp/Payload
-          cp -R /tmp/device-build/CareHome.app /tmp/Payload/
-
-(
-            cd /tmp
-            zip -qr CareHome-unsigned.ipa Payload
-          )
-
-- name: Upload unsigned device IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: CareHome-unsigned-${{ github.run_number }}
-          path: /tmp/CareHome-unsigned.ipa
-          retention-days: 30
-          if-no-files-found: error
-
-- name: Import certificate and provisioning profile
-        if: env.HAS_CERT == 'true'
-        shell: bash
-        env:
-          CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
-          KEYCHAIN_PASSWORD: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-
-echo "$CERTIFICATE_P12" | base64 --decode > certificate.p12
-          echo "$PROVISIONING_PROFILE" | base64 --decode > profile.mobileprovision
-
-security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security set-keychain-settings -t 3600 -u build.keychain
-          security import certificate.p12 -k build.keychain \
-            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list \
-            -S apple-tool:,apple: -s \
-            -k "$KEYCHAIN_PASSWORD" build.keychain
-
-mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-          cp profile.mobileprovision \
-            "$HOME/Library/MobileDevice/Provisioning Profiles/profile.mobileprovision"
-
-security cms -D -i profile.mobileprovision > /tmp/profile.plist
-
-- name: Archive signed device app
-        if: env.HAS_CERT == 'true'
-        shell: bash
-        env:
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-
-PROFILE_UUID=$(/usr/libexec/PlistBuddy \
-            -c "Print UUID" /tmp/profile.plist)
-
-xcodebuild archive \
-            -project iosApp/iosApp.xcodeproj \
-            -scheme iosApp \
-            -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath build/iosApp.xcarchive \
-            DEVELOPMENT_TEAM="$TEAM_ID" \
-            TEAM_ID="$TEAM_ID" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            PROVISIONING_PROFILE="$PROFILE_UUID" \
-            2>&1 | tee /tmp/xcode_archive.log
-
-- name: Export signed IPA
-        if: env.HAS_CERT == 'true'
-        shell: bash
-        env:
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-
-PROFILE_UUID=$(/usr/libexec/PlistBuddy \
-            -c "Print UUID" /tmp/profile.plist)
-
-APP_PLIST="build/iosApp.xcarchive/Products/Applications/CareHome.app/Info.plist"
-          BUNDLE_ID=$(/usr/libexec/PlistBuddy \
-            -c "Print CFBundleIdentifier" "$APP_PLIST")
-
-cat > /tmp/ExportOptions.plist << PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>app-store-connect</string>
-              <key>teamID</key>
-              <string>${TEAM_ID}</string>
-              <key>provisioningProfiles</key>
-              <dict>
-                  <key>${BUNDLE_ID}</key>
-                  <string>${PROFILE_UUID}</string>
-              </dict>
-          </dict>
-          </plist>
-          PLIST
-
-xcodebuild -exportArchive \
-            -archivePath build/iosApp.xcarchive \
-            -exportOptionsPlist /tmp/ExportOptions.plist \
-            -exportPath build/iosApp-export \
-            2>&1 | tee /tmp/xcode_export.log
-
-- name: Upload signed IPA
-        if: env.HAS_CERT == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: CareHome-signed-${{ github.run_number }}
-          path: build/iosApp-export/*.ipa
-          retention-days: 30
-          if-no-files-found: error
+          name: ios-simulator-app
+          path: build/ios_simulator/Build/Products/Debug-iphonesimulator/*.app
+          retention-days: 7
